@@ -40,7 +40,7 @@ describe('DatabaseManager', () => {
       expect(fs.existsSync(dbPath)).toBe(true);
     });
 
-    it('should set correct file permissions on the database file', () => {
+    it.skipIf(process.platform === 'win32')('should set correct file permissions on the database file', () => {
       manager.getPersonalDb();
       const dbPath = path.join(tmpDir, 'local.db');
       const stats = fs.statSync(dbPath);
@@ -68,7 +68,7 @@ describe('DatabaseManager', () => {
       expect(fs.existsSync(dbPath)).toBe(true);
     });
 
-    it('should create the project directory with correct permissions', () => {
+    it.skipIf(process.platform === 'win32')('should create the project directory with correct permissions', () => {
       manager.getProjectDb('my-project');
       const projectDir = path.join(tmpDir, 'projects', 'my-project');
       const stats = fs.statSync(projectDir);
@@ -76,7 +76,7 @@ describe('DatabaseManager', () => {
       expect(mode).toBe(0o700);
     });
 
-    it('should set correct file permissions on the database file', () => {
+    it.skipIf(process.platform === 'win32')('should set correct file permissions on the database file', () => {
       manager.getProjectDb('my-project');
       const dbPath = path.join(tmpDir, 'projects', 'my-project', 'local.db');
       const stats = fs.statSync(dbPath);

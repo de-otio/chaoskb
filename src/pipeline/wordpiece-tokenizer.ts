@@ -49,7 +49,7 @@ export function loadVocabulary(vocabPath: string): Vocabulary {
   }
 
   const content = readFileSync(vocabPath, 'utf-8');
-  const lines = content.split('\n');
+  const lines = content.split(/\r?\n/);
   const tokenToId = new Map<string, number>();
 
   for (let i = 0; i < lines.length; i++) {
