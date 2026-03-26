@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { deriveFromPassphrase } from '../argon2.js';
 
-describe('Argon2id KDF', () => {
-  // Use short passphrases for test speed; real usage requires stronger passphrases
+describe('Argon2id KDF', { timeout: 30_000 }, () => {
+  // Argon2id is intentionally slow (memory-hard); allow 30s for CI runners
   const salt = new Uint8Array(16).fill(0xab);
 
   it('should derive a 32-byte key', () => {
