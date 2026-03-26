@@ -81,4 +81,4 @@ See [SECURITY.md](SECURITY.md) for the vulnerability disclosure policy and crypt
 
 ## License
 
-TBD
+[MIT](LICENSE)

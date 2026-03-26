@@ -8,7 +8,13 @@
     "url": "https://github.com/deotio/chaoskb.git",
     "directory": "src"
   },
-  "keywords": ["chaoskb", "knowledge-base", "mcp", "encrypted-sync", "cli"],
+  "keywords": [
+    "chaoskb",
+    "knowledge-base",
+    "mcp",
+    "encrypted-sync",
+    "cli"
+  ],
   "type": "module",
   "main": "./dist/cli/index.js",
   "types": "./dist/cli/index.d.ts",
@@ -21,7 +27,9 @@
   "bin": {
     "chaoskb-mcp": "./dist/cli/index.js"
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc",
     "test": "vitest run",
@@ -36,6 +44,7 @@
     "@noble/hashes": "^2.0.1",
     "better-sqlite3": "^12.8.0",
     "bip39": "^3.1.0",
+    "cborg": "^4.5.8",
     "commander": "^14.0.3",
     "linkedom": "^0.18.12",
     "onnxruntime-node": "^1.24.3",
@@ -48,6 +57,6 @@
     "vitest": "^4.1.0"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=20.0.0"
   }
 }

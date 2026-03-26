@@ -75,6 +75,31 @@ export interface Envelope {
   };
 }
 
+/**
+ * Envelope v2 CBOR wire format — stores ct and commit as raw binary
+ * instead of base64, saving ~33% size on ciphertext.
+ */
+export interface EnvelopeV2 {
+  /** Envelope version (must be 2) */
+  v: 2;
+  /** Opaque blob identifier */
+  id: string;
+  /** ISO 8601 timestamp */
+  ts: string;
+  /** Encryption envelope */
+  enc: {
+    alg: Algorithm;
+    kid: KeyId;
+    /** Raw binary: nonce || ciphertext || auth_tag */
+    ct: Uint8Array;
+    /** HMAC-SHA256 key commitment (raw binary) */
+    commit: Uint8Array;
+  };
+}
+
+/** Union type for any supported envelope version */
+export type AnyEnvelope = Envelope | EnvelopeV2;
+
 /** Plaintext payload types */
 export type PayloadType = 'source' | 'chunk' | 'canary';
 

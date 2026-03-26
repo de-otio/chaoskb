@@ -1,6 +1,6 @@
 import type BetterSqlite3 from 'better-sqlite3';
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 export const CREATE_TABLES_SQL: string[] = [
   `CREATE TABLE IF NOT EXISTS sources (
@@ -34,6 +34,29 @@ export const CREATE_TABLES_SQL: string[] = [
   `CREATE TABLE IF NOT EXISTS schema_version (
     version INTEGER NOT NULL
   )`,
+  // FTS5 virtual table for keyword search over chunk content
+  `CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
+    content,
+    source_id UNINDEXED,
+    chunk_index UNINDEXED,
+    content='chunks',
+    content_rowid='rowid'
+  )`,
+  // Triggers to keep FTS index in sync with the chunks table
+  `CREATE TRIGGER IF NOT EXISTS chunks_ai AFTER INSERT ON chunks BEGIN
+    INSERT INTO chunks_fts(rowid, content, source_id, chunk_index)
+    VALUES (new.rowid, new.content, new.source_id, new.chunk_index);
+  END`,
+  `CREATE TRIGGER IF NOT EXISTS chunks_ad AFTER DELETE ON chunks BEGIN
+    INSERT INTO chunks_fts(chunks_fts, rowid, content, source_id, chunk_index)
+    VALUES ('delete', old.rowid, old.content, old.source_id, old.chunk_index);
+  END`,
+  `CREATE TRIGGER IF NOT EXISTS chunks_au AFTER UPDATE ON chunks BEGIN
+    INSERT INTO chunks_fts(chunks_fts, rowid, content, source_id, chunk_index)
+    VALUES ('delete', old.rowid, old.content, old.source_id, old.chunk_index);
+    INSERT INTO chunks_fts(rowid, content, source_id, chunk_index)
+    VALUES (new.rowid, new.content, new.source_id, new.chunk_index);
+  END`,
 ];
 
 export function initializeSchema(db: BetterSqlite3.Database): void {
@@ -75,8 +98,43 @@ export function migrateSchema(db: BetterSqlite3.Database): void {
     return; // Already up to date
   }
 
-  // Future migrations would go here, e.g.:
-  // if (currentVersion < 2) { runMigrationV2(db); }
+  if (currentVersion < 2) {
+    runMigrationV2(db);
+  }
 
   db.prepare('UPDATE schema_version SET version = ?').run(SCHEMA_VERSION);
+}
+
+/**
+ * Migration v2: Add FTS5 full-text search index for keyword search.
+ */
+function runMigrationV2(db: BetterSqlite3.Database): void {
+  db.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
+    content,
+    source_id UNINDEXED,
+    chunk_index UNINDEXED,
+    content='chunks',
+    content_rowid='rowid'
+  )`);
+
+  db.exec(`CREATE TRIGGER IF NOT EXISTS chunks_ai AFTER INSERT ON chunks BEGIN
+    INSERT INTO chunks_fts(rowid, content, source_id, chunk_index)
+    VALUES (new.rowid, new.content, new.source_id, new.chunk_index);
+  END`);
+
+  db.exec(`CREATE TRIGGER IF NOT EXISTS chunks_ad AFTER DELETE ON chunks BEGIN
+    INSERT INTO chunks_fts(chunks_fts, rowid, content, source_id, chunk_index)
+    VALUES ('delete', old.rowid, old.content, old.source_id, old.chunk_index);
+  END`);
+
+  db.exec(`CREATE TRIGGER IF NOT EXISTS chunks_au AFTER UPDATE ON chunks BEGIN
+    INSERT INTO chunks_fts(chunks_fts, rowid, content, source_id, chunk_index)
+    VALUES ('delete', old.rowid, old.content, old.source_id, old.chunk_index);
+    INSERT INTO chunks_fts(rowid, content, source_id, chunk_index)
+    VALUES (new.rowid, new.content, new.source_id, new.chunk_index);
+  END`);
+
+  // Backfill: populate FTS index from existing chunk data
+  db.exec(`INSERT INTO chunks_fts(rowid, content, source_id, chunk_index)
+    SELECT rowid, content, source_id, chunk_index FROM chunks`);
 }

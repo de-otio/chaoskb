@@ -49,7 +49,7 @@ export function validateConfigPath(configFilePath: string): void {
 
   // Resolve the path to an absolute path for comparison
   const resolved = path.resolve(configFilePath);
-  const home = os.homedir();
+  const _home = os.homedir();
 
   // Check if it's a relative project config path
   if (!path.isAbsolute(configFilePath)) {

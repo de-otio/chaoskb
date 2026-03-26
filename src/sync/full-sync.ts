@@ -31,7 +31,6 @@ export async function fullSync(
 
   state.fullSyncInProgress = true;
 
-  // eslint-disable-next-line no-constant-condition
   while (true) {
     const listPath = cursor ? `/v1/blobs?cursor=${encodeURIComponent(cursor)}` : '/v1/blobs';
 
@@ -46,6 +45,7 @@ export async function fullSync(
         newBlobs,
         updatedBlobs: 0,
         deletedBlobs: 0,
+        conflicts: [],
         errors,
         success: false,
       };
@@ -105,6 +105,7 @@ export async function fullSync(
     newBlobs,
     updatedBlobs: 0,
     deletedBlobs: 0,
+    conflicts: [],
     errors,
     success: errors.length === 0,
   };

@@ -183,40 +183,61 @@ export class KeyringService implements IKeyringService {
 
   private async storeWindows(service: string, account: string, secret: string): Promise<void> {
     const target = `${service}/${account}`;
-    await execFileAsync('cmdkey', [
-      `/add:${target}`,
-      `/user:${account}`,
-      `/pass:${secret}`,
-    ]);
+    // Use PowerShell with .NET CredentialManager API (no external modules required)
+    const script = `
+      Add-Type -AssemblyName System.Runtime.InteropServices
+      $cred = New-Object System.Management.Automation.PSCredential('${account.replace(/'/g, "''")}', (ConvertTo-SecureString '${secret.replace(/'/g, "''")}' -AsPlainText -Force))
+      cmdkey /add:${target} /user:${account} /pass:${secret}
+    `.trim();
+    await execFileAsync('powershell', ['-NoProfile', '-Command', script]);
   }
 
   private async retrieveWindows(service: string, account: string): Promise<string> {
     const target = `${service}/${account}`;
-    const { stdout } = await execFileAsync('cmdkey', [
-      `/list:${target}`,
-    ]);
+    // Use PowerShell with native .NET Credential API (no external modules needed)
+    const script = `
+      Add-Type @"
+        using System;
+        using System.Runtime.InteropServices;
+        public class CredentialHelper {
+          [DllImport("advapi32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
+          public static extern bool CredReadW(string target, int type, int flags, out IntPtr credential);
+          [DllImport("advapi32.dll")]
+          public static extern void CredFree(IntPtr credential);
+          [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Unicode)]
+          public struct CREDENTIAL {
+            public int Flags; public int Type;
+            public string TargetName; public string Comment;
+            public long LastWritten; public int CredentialBlobSize;
+            public IntPtr CredentialBlob; public int Persist;
+            public int AttributeCount; public IntPtr Attributes;
+            public string TargetAlias; public string UserName;
+          }
+          public static string Read(string target) {
+            IntPtr ptr;
+            if (!CredReadW(target, 1, 0, out ptr)) return "";
+            var cred = (CREDENTIAL)Marshal.PtrToStructure(ptr, typeof(CREDENTIAL));
+            var secret = Marshal.PtrToStringUni(cred.CredentialBlob, cred.CredentialBlobSize / 2);
+            CredFree(ptr);
+            return secret;
+          }
+        }
+"@
+      [CredentialHelper]::Read('${target.replace(/'/g, "''")}')
+    `.trim();
 
-    // Parse cmdkey output to extract the password
-    // Note: cmdkey /list doesn't actually output passwords; on Windows
-    // we need to use the Windows Credential API via PowerShell
-    // This is a fallback approach using PowerShell
-    const { stdout: psOutput } = await execFileAsync('powershell', [
-      '-NoProfile',
-      '-Command',
-      `[System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR((Get-StoredCredential -Target '${target}').Password))`,
-    ]);
+    const { stdout } = await execFileAsync('powershell', ['-NoProfile', '-Command', script]);
+    const result = stdout.trim();
 
-    if (!psOutput.trim()) {
+    if (!result) {
       throw new Error(`Credential not found: ${target}`);
     }
 
-    return psOutput.trim();
+    return result;
   }
 
   private async deleteWindows(service: string, account: string): Promise<void> {
     const target = `${service}/${account}`;
-    await execFileAsync('cmdkey', [
-      `/delete:${target}`,
-    ]);
+    await execFileAsync('cmdkey', ['/delete:' + target]);
   }
 }

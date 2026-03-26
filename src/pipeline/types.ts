@@ -80,8 +80,14 @@ export interface IContentPipeline {
 export interface IModelManager {
   /** Check if model is downloaded and verified */
   isModelReady(): Promise<boolean>;
-  /** Download model if not present, verify SHA-256 */
+  /** Download model if not present, verify SHA-256. Also downloads vocab. */
   ensureModel(onProgress?: DownloadProgressCallback): Promise<string>;
   /** Get path to model file */
   getModelPath(): string;
+  /** Get path to vocabulary file */
+  getVocabPath(): string;
+  /** Check if vocabulary is downloaded and verified */
+  isVocabReady(): Promise<boolean>;
+  /** Download vocabulary if not present, verify SHA-256 */
+  ensureVocab(): Promise<string>;
 }

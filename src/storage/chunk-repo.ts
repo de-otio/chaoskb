@@ -33,6 +33,15 @@ function rowToRecord(row: ChunkRow): ChunkRecord {
   };
 }
 
+/** Result of a keyword search using FTS5 */
+export interface KeywordSearchResult {
+  sourceId: string;
+  chunkIndex: number;
+  content: string;
+  snippet: string;
+  rank: number;
+}
+
 export class ChunkRepository implements IChunkRepository {
   private readonly db: BetterSqlite3.Database;
 
@@ -105,5 +114,52 @@ export class ChunkRepository implements IChunkRepository {
   deleteBySourceId(sourceId: string): number {
     const result = this.deleteBySourceIdStmt.run(sourceId);
     return result.changes;
+  }
+
+  /**
+   * Search chunk content using FTS5 keyword matching.
+   *
+   * @param query - Search query (supports FTS5 syntax: AND, OR, NOT, "phrase", prefix*)
+   * @param topK - Maximum number of results to return.
+   * @returns Results ranked by BM25 relevance score.
+   */
+  searchKeyword(query: string, topK: number): KeywordSearchResult[] {
+    if (!query || query.trim().length === 0) {
+      return [];
+    }
+
+    try {
+      const stmt = this.db.prepare(`
+        SELECT
+          chunks_fts.source_id,
+          chunks_fts.chunk_index,
+          chunks_fts.content,
+          snippet(chunks_fts, 0, '>>>>', '<<<<', '...', 32) AS snippet,
+          rank
+        FROM chunks_fts
+        WHERE chunks_fts MATCH ?
+        ORDER BY rank
+        LIMIT ?
+      `);
+
+      const rows = stmt.all(query, topK) as Array<{
+        source_id: string;
+        chunk_index: number;
+        content: string;
+        snippet: string;
+        rank: number;
+      }>;
+
+      return rows.map((row) => ({
+        sourceId: row.source_id,
+        chunkIndex: row.chunk_index,
+        content: row.content,
+        snippet: row.snippet,
+        rank: row.rank,
+      }));
+    } catch {
+      // FTS5 query syntax errors should not crash — return empty results
+      return [];
+    }
   }
 }

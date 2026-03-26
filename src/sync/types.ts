@@ -24,10 +24,25 @@ export interface SyncResult {
   updatedBlobs: number;
   /** Number of tombstones processed */
   deletedBlobs: number;
+  /** Conflicts detected and resolved */
+  conflicts: SyncConflict[];
   /** Errors encountered (non-fatal) */
   errors: SyncError[];
   /** Whether sync completed successfully */
   success: boolean;
+}
+
+/** A sync conflict that was detected and resolved */
+export interface SyncConflict {
+  blobId: string;
+  /** How the conflict was resolved */
+  resolution: 'local_wins' | 'remote_wins' | 'keep_both';
+  /** Why a conflict was detected */
+  reason: string;
+  /** Timestamp of local version */
+  localTimestamp?: string;
+  /** Timestamp of remote version */
+  remoteTimestamp?: string;
 }
 
 /** Sync error */

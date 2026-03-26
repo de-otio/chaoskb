@@ -71,7 +71,7 @@ export async function handleKbIngest(
   });
 
   // 8. Store chunk records with embeddings
-  const chunkRecords = embeddedChunks.map((ec, i) => ({
+  const chunkRecords = embeddedChunks.map((ec, _i) => ({
     sourceId,
     chunkIndex: ec.index,
     content: ec.content,

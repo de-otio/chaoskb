@@ -59,7 +59,7 @@ describe('chunkText', () => {
     if (chunks.length >= 2) {
       // The end of one chunk should overlap with the start of the next
       const chunk0Words = chunks[0].content.split(/\s+/);
-      const chunk1Words = chunks[1].content.split(/\s+/);
+      const _chunk1Words = chunks[1].content.split(/\s+/);
 
       // Find shared words
       const chunk0Suffix = chunk0Words.slice(-5).join(' ');

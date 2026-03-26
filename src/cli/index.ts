@@ -9,6 +9,7 @@ import { registerCommand } from './commands/register.js';
 import { unregisterCommand } from './commands/unregister.js';
 import { statusCommand } from './commands/status.js';
 import { exportCommand } from './commands/export.js';
+import { importCommand } from './commands/import.js';
 import { projectCommand } from './commands/project.js';
 
 const require = createRequire(import.meta.url);
@@ -88,6 +89,19 @@ async function main(): Promise<void> {
       await exportCommand({
         format: opts.format as 'encrypted' | 'plaintext',
         outputPath: opts.output,
+        projectName: globalProject,
+      });
+    });
+
+  program
+    .command('import <path>')
+    .description('Import a previously exported KB')
+    .option('--overwrite', 'overwrite existing sources with same URL')
+    .action(async (inputPath: string, opts: { overwrite?: boolean }) => {
+      const globalProject = program.opts().project as string | undefined;
+      await importCommand({
+        inputPath,
+        overwrite: opts.overwrite,
         projectName: globalProject,
       });
     });

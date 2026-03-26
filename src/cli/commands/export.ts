@@ -96,7 +96,7 @@ async function exportEncrypted(outputDir: string): Promise<void> {
     // Collect all envelopes from DB
     const dbManager = new DatabaseManager();
     const db = dbManager.getPersonalDb();
-    const syncRecords = db.syncStatus.getByStatus(SyncStatus.Synced);
+    const _syncRecords = db.syncStatus.getByStatus(SyncStatus.Synced);
 
     const exportData = {
       version: 1,

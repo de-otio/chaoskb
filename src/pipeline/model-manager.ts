@@ -19,11 +19,21 @@ import type { DownloadProgressCallback, IModelManager } from './types.js';
 const MODEL_URL =
   'https://huggingface.co/Snowflake/snowflake-arctic-embed-s/resolve/main/onnx/model.onnx';
 
+/** Vocabulary file download URL. */
+const VOCAB_URL =
+  'https://huggingface.co/Snowflake/snowflake-arctic-embed-s/resolve/main/vocab.txt';
+
 /** Model filename. */
 const MODEL_FILENAME = 'model.onnx';
 
+/** Vocabulary filename. */
+const VOCAB_FILENAME = 'vocab.txt';
+
 /** SHA-256 sidecar filename. */
 const HASH_FILENAME = 'model.onnx.sha256';
+
+/** Vocabulary SHA-256 sidecar filename. */
+const VOCAB_HASH_FILENAME = 'vocab.txt.sha256';
 
 /** Temporary download suffix. */
 const TEMP_SUFFIX = '.download';
@@ -47,6 +57,13 @@ export class ModelManager implements IModelManager {
    */
   getModelPath(): string {
     return join(this.modelsDir, MODEL_FILENAME);
+  }
+
+  /**
+   * Get the expected path to the vocabulary file.
+   */
+  getVocabPath(): string {
+    return join(this.modelsDir, VOCAB_FILENAME);
   }
 
   /**
@@ -74,7 +91,8 @@ export class ModelManager implements IModelManager {
 
   /**
    * Ensure the model is downloaded and verified. Downloads if missing
-   * or hash mismatch. Returns the path to the model file.
+   * or hash mismatch. Also downloads the vocabulary file.
+   * Returns the path to the model file.
    *
    * @param onProgress - Optional callback for download progress.
    * @returns Absolute path to the verified model file.
@@ -82,12 +100,15 @@ export class ModelManager implements IModelManager {
   async ensureModel(onProgress?: DownloadProgressCallback): Promise<string> {
     const modelPath = this.getModelPath();
 
+    // Create directory
+    await mkdir(this.modelsDir, { recursive: true });
+
+    // Ensure vocab is downloaded (small file, do first)
+    await this.ensureVocab();
+
     if (await this.isModelReady()) {
       return modelPath;
     }
-
-    // Create directory
-    await mkdir(this.modelsDir, { recursive: true });
 
     // Download to temporary file
     const tempPath = modelPath + TEMP_SUFFIX;
@@ -106,9 +127,65 @@ export class ModelManager implements IModelManager {
   }
 
   /**
+   * Check if the vocabulary file exists and its hash matches.
+   */
+  async isVocabReady(): Promise<boolean> {
+    const vocabPath = this.getVocabPath();
+    const hashPath = join(this.modelsDir, VOCAB_HASH_FILENAME);
+
+    try {
+      await access(vocabPath);
+      await access(hashPath);
+    } catch {
+      return false;
+    }
+
+    try {
+      const storedHash = (await readFile(hashPath, 'utf-8')).trim();
+      const actualHash = await computeFileHash(vocabPath);
+      return storedHash === actualHash;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Ensure the vocabulary file is downloaded and verified.
+   */
+  async ensureVocab(): Promise<string> {
+    const vocabPath = this.getVocabPath();
+
+    if (await this.isVocabReady()) {
+      return vocabPath;
+    }
+
+    await mkdir(this.modelsDir, { recursive: true });
+
+    const tempPath = vocabPath + TEMP_SUFFIX;
+    await this.downloadFile(VOCAB_URL, tempPath);
+
+    const hash = await computeFileHash(tempPath);
+    await rename(tempPath, vocabPath);
+    await writeFile(join(this.modelsDir, VOCAB_HASH_FILENAME), hash + '\n', 'utf-8');
+
+    return vocabPath;
+  }
+
+  /**
    * Download the model file with progress reporting.
    */
   private async downloadModel(
+    destPath: string,
+    onProgress?: DownloadProgressCallback,
+  ): Promise<void> {
+    return this.downloadFile(MODEL_URL, destPath, onProgress);
+  }
+
+  /**
+   * Download a file from a URL with optional progress reporting and resume support.
+   */
+  private async downloadFile(
+    url: string,
     destPath: string,
     onProgress?: DownloadProgressCallback,
   ): Promise<void> {
@@ -133,10 +210,10 @@ export class ModelManager implements IModelManager {
 
     let response: Response;
     try {
-      response = await fetch(MODEL_URL, { headers, redirect: 'follow' });
+      response = await fetch(url, { headers, redirect: 'follow' });
     } catch (error: unknown) {
       const msg = error instanceof Error ? error.message : String(error);
-      throw new Error(`Failed to download model: ${msg}`);
+      throw new Error(`Failed to download ${url}: ${msg}`);
     }
 
     // If server doesn't support range or returned full content, start fresh
@@ -145,7 +222,7 @@ export class ModelManager implements IModelManager {
     } else if (response.status === 206) {
       // Partial content — resume supported
     } else if (!response.ok) {
-      throw new Error(`Failed to download model: HTTP ${response.status} ${response.statusText}`);
+      throw new Error(`Failed to download ${url}: HTTP ${response.status} ${response.statusText}`);
     }
 
     const contentLength = response.headers.get('content-length');
@@ -181,7 +258,7 @@ export class ModelManager implements IModelManager {
         // Ignore cleanup errors
       }
       const msg = error instanceof Error ? error.message : String(error);
-      throw new Error(`Model download interrupted: ${msg}`);
+      throw new Error(`Download interrupted: ${msg}`);
     }
   }
 }

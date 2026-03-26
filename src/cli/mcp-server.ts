@@ -46,14 +46,19 @@ const TOOL_DEFINITIONS = [
   {
     name: 'kb_query',
     description:
-      'Search the knowledge base with a natural language query. Returns ranked results by semantic similarity.',
+      'Search the knowledge base. Supports semantic (embedding) search, keyword (FTS5) search, or hybrid (both combined).',
     inputSchema: {
       type: 'object' as const,
       properties: {
-        query: { type: 'string', description: 'Natural language search query' },
+        query: { type: 'string', description: 'Search query' },
         limit: {
           type: 'number',
           description: 'Maximum number of results to return (default: 10)',
+        },
+        mode: {
+          type: 'string',
+          enum: ['semantic', 'keyword', 'hybrid'],
+          description: 'Search mode: "semantic" (default) for meaning-based, "keyword" for exact text match, "hybrid" for combined ranking',
         },
       },
       required: ['query'],
@@ -142,6 +147,7 @@ export function createMcpServer(deps: McpDependencies): Server {
             {
               query: (args as Record<string, unknown>).query as string,
               limit: (args as Record<string, unknown>).limit as number | undefined,
+              mode: (args as Record<string, unknown>).mode as 'semantic' | 'keyword' | 'hybrid' | undefined,
             },
             deps,
           );

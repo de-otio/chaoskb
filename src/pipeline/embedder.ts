@@ -4,17 +4,13 @@
  * Provides a high-level Embedder class that loads an ONNX model and
  * produces 384-dimensional embedding vectors from text input.
  *
- * NOTE: The tokenization here is a placeholder. A proper WordPiece
- * tokenizer with the model's vocabulary will be integrated in a future
- * iteration. For now, we create simple numeric token IDs from the text
- * to exercise the ONNX session interface.
+ * Uses a real BERT WordPiece tokenizer with the model's vocabulary
+ * for proper subword tokenization and meaningful embeddings.
  */
 
 import * as ort from 'onnxruntime-node';
 import type { EmbeddingVector } from './types.js';
-
-/** Embedding dimension for snowflake-arctic-embed-s. */
-const EMBEDDING_DIM = 384;
+import { loadVocabulary, tokenize, type Vocabulary } from './wordpiece-tokenizer.js';
 
 /** Maximum sequence length for the model. */
 const MAX_SEQ_LENGTH = 512;
@@ -24,13 +20,18 @@ const MAX_SEQ_LENGTH = 512;
  */
 export class Embedder {
   private session: ort.InferenceSession | null = null;
-  private readonly modelPath: string;
+  private vocab: Vocabulary | null = null;
+  readonly modelPath: string;
+  private readonly vocabPath: string;
 
   /**
    * @param modelPath - Absolute path to the ONNX model file.
+   * @param vocabPath - Absolute path to the vocab.txt file.
    */
-  constructor(modelPath: string) {
+  constructor(modelPath: string, vocabPath?: string) {
     this.modelPath = modelPath;
+    // Default: vocab.txt in the same directory as the model
+    this.vocabPath = vocabPath ?? modelPath.replace(/[^/\\]+$/, 'vocab.txt');
   }
 
   /**
@@ -53,6 +54,9 @@ export class Embedder {
           'Ensure the model file exists and is a valid ONNX model.',
       );
     }
+
+    // Load vocabulary
+    this.vocab = loadVocabulary(this.vocabPath);
   }
 
   /**
@@ -79,16 +83,16 @@ export class Embedder {
     }
 
     const session = this.session!;
+    const vocab = this.vocab!;
     const batchSize = texts.length;
 
-    // Tokenize each text into input IDs
+    // Tokenize each text into input IDs using real WordPiece tokenizer
     const allInputIds: bigint[][] = [];
     const allAttentionMask: bigint[][] = [];
     let maxLen = 0;
 
     for (const text of texts) {
-      const tokens = simpleTokenize(text);
-      const ids = tokens.slice(0, MAX_SEQ_LENGTH);
+      const ids = tokenize(text, vocab, MAX_SEQ_LENGTH);
       allInputIds.push(ids);
       allAttentionMask.push(ids.map(() => 1n));
       maxLen = Math.max(maxLen, ids.length);
@@ -200,35 +204,6 @@ export class Embedder {
       this.session = null;
     }
   }
-}
-
-/**
- * Placeholder tokenizer: converts text to simple integer token IDs.
- *
- * This is NOT a real WordPiece tokenizer. It assigns a deterministic
- * token ID to each whitespace-delimited word by hashing, and wraps with
- * CLS/SEP tokens. This is sufficient to exercise the ONNX model interface
- * but will NOT produce meaningful embeddings until replaced with the
- * model's actual tokenizer.
- */
-function simpleTokenize(text: string): bigint[] {
-  const CLS = 101n;
-  const SEP = 102n;
-
-  const words = text.toLowerCase().split(/\s+/).filter((w) => w.length > 0);
-  const ids: bigint[] = [CLS];
-
-  for (const word of words) {
-    // Simple hash to get a token ID in vocab range [1000, 30000)
-    let hash = 0;
-    for (let i = 0; i < word.length; i++) {
-      hash = (hash * 31 + word.charCodeAt(i)) & 0x7fffffff;
-    }
-    ids.push(BigInt(1000 + (hash % 29000)));
-  }
-
-  ids.push(SEP);
-  return ids;
 }
 
 /**

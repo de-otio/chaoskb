@@ -75,11 +75,22 @@ export interface ISourceRepository {
   updateLastAccessed(id: string): void;
 }
 
+/** Result of a keyword search */
+export interface KeywordSearchResult {
+  sourceId: string;
+  chunkIndex: number;
+  content: string;
+  snippet: string;
+  rank: number;
+}
+
 /** Chunk repository interface */
 export interface IChunkRepository {
   insertMany(chunks: Omit<ChunkRecord, 'id'>[]): ChunkRecord[];
   getBySourceId(sourceId: string): ChunkRecord[];
   deleteBySourceId(sourceId: string): number;
+  /** Search chunk content using FTS5 keyword matching */
+  searchKeyword(query: string, topK: number): KeywordSearchResult[];
 }
 
 /** Sync status repository interface */

@@ -151,7 +151,7 @@ export class AdminDashboard extends Construct {
 
     // Metric filters for sync operations and auth failures (if log group provided)
     if (props.lambdaLogGroup) {
-      const syncOpsFilter = new MetricFilter(this, 'SyncOpsMetricFilter', {
+      const _syncOpsFilter = new MetricFilter(this, 'SyncOpsMetricFilter', {
         logGroup: props.lambdaLogGroup,
         filterPattern: FilterPattern.literal('{ $.operation = "sync" }'),
         metricNamespace: 'ChaosKB',
@@ -159,7 +159,7 @@ export class AdminDashboard extends Construct {
         metricValue: '1',
       });
 
-      const authFailuresFilter = new MetricFilter(this, 'AuthFailuresMetricFilter', {
+      const _authFailuresFilter = new MetricFilter(this, 'AuthFailuresMetricFilter', {
         logGroup: props.lambdaLogGroup,
         filterPattern: FilterPattern.literal('{ $.error = "auth_error" }'),
         metricNamespace: 'ChaosKB',

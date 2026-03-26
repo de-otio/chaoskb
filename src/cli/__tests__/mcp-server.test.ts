@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { createMcpServer, TOOL_DEFINITIONS } from '../mcp-server.js';
 import type { McpDependencies } from '../mcp-server.js';
 import type { IDatabase, IDatabaseManager } from '../../storage/types.js';
@@ -20,6 +20,7 @@ function createMockDeps(): McpDependencies {
       insertMany: vi.fn().mockReturnValue([]),
       getBySourceId: vi.fn().mockReturnValue([]),
       deleteBySourceId: vi.fn().mockReturnValue(0),
+      searchKeyword: vi.fn().mockReturnValue([]),
     },
     syncStatus: {
       set: vi.fn(),

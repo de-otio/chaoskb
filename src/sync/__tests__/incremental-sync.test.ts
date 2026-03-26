@@ -173,6 +173,96 @@ describe('incrementalSync', () => {
     expect(result.success).toBe(false);
   });
 
+  it('should detect conflict when local has unsynchronized changes and remote is newer', async () => {
+    const responses = new Map<string, { status: number; body?: unknown }>([
+      ['/v1/blobs', {
+        status: 200,
+        body: {
+          blobs: [{ id: 'b_conflict', size: 100, ts: '2026-03-20T12:00:00Z' }],
+          tombstones: [],
+        },
+      }],
+      ['/v1/blobs/b_conflict', { status: 200, body: null }],
+    ]);
+
+    const client = createMockClient(responses);
+    const storage = createMockStorage();
+    // Local has unsynchronized changes with an older timestamp
+    (storage.syncStatus.get as ReturnType<typeof vi.fn>).mockImplementation((id: string) =>
+      id === 'b_conflict'
+        ? { blobId: 'b_conflict', status: SyncStatus.LocalOnly, lastAttempt: '2026-03-20T10:00:00Z' }
+        : null,
+    );
+
+    const result = await incrementalSync(client, storage);
+
+    expect(result.conflicts.length).toBe(1);
+    expect(result.conflicts[0].resolution).toBe('remote_wins');
+    expect(result.conflicts[0].blobId).toBe('b_conflict');
+    expect(result.updatedBlobs).toBe(1);
+    expect(storage.syncStatus.set).toHaveBeenCalledWith('b_conflict', SyncStatus.Synced);
+  });
+
+  it('should keep local version when local changes are newer', async () => {
+    const responses = new Map<string, { status: number; body?: unknown }>([
+      ['/v1/blobs', {
+        status: 200,
+        body: {
+          blobs: [{ id: 'b_conflict', size: 100, ts: '2026-03-20T08:00:00Z' }],
+          tombstones: [],
+        },
+      }],
+    ]);
+
+    const client = createMockClient(responses);
+    const storage = createMockStorage();
+    // Local has unsynchronized changes with a newer timestamp
+    (storage.syncStatus.get as ReturnType<typeof vi.fn>).mockImplementation((id: string) =>
+      id === 'b_conflict'
+        ? { blobId: 'b_conflict', status: SyncStatus.LocalOnly, lastAttempt: '2026-03-20T12:00:00Z' }
+        : null,
+    );
+
+    const result = await incrementalSync(client, storage);
+
+    expect(result.conflicts.length).toBe(1);
+    expect(result.conflicts[0].resolution).toBe('local_wins');
+    expect(result.newBlobs).toBe(0);
+    expect(result.updatedBlobs).toBe(0);
+    // Should NOT have downloaded the blob
+    expect(client.get).toHaveBeenCalledTimes(1); // Only the list request
+  });
+
+  it('should keep local version when remote sends tombstone for unsynchronized blob', async () => {
+    const responses = new Map<string, { status: number; body?: unknown }>([
+      ['/v1/blobs', {
+        status: 200,
+        body: {
+          blobs: [],
+          tombstones: [{ id: 'b_local', deletedAt: '2026-03-20T10:00:00Z' }],
+        },
+      }],
+    ]);
+
+    const client = createMockClient(responses);
+    const storage = createMockStorage();
+    // Local has unsynchronized changes
+    (storage.syncStatus.get as ReturnType<typeof vi.fn>).mockImplementation((id: string) =>
+      id === 'b_local'
+        ? { blobId: 'b_local', status: SyncStatus.LocalOnly }
+        : null,
+    );
+
+    const result = await incrementalSync(client, storage);
+
+    expect(result.conflicts.length).toBe(1);
+    expect(result.conflicts[0].resolution).toBe('local_wins');
+    expect(result.conflicts[0].reason).toContain('unsynchronized');
+    expect(result.deletedBlobs).toBe(0);
+    // Should NOT have set PendingDelete
+    expect(storage.syncStatus.set).not.toHaveBeenCalled();
+  });
+
   it('should return failure when list request fails', async () => {
     const responses = new Map<string, { status: number; body?: unknown }>([
       ['/v1/blobs', { status: 503, body: null }],
