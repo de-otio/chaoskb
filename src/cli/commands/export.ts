@@ -3,7 +3,6 @@ import * as path from 'node:path';
 import * as readline from 'node:readline';
 import * as crypto from 'node:crypto';
 import { loadConfig } from './setup.js';
-import { SyncStatus } from '../../storage/types.js';
 
 export interface ExportOptions {
   format: 'encrypted' | 'plaintext';
@@ -93,10 +92,38 @@ async function exportEncrypted(outputDir: string): Promise<void> {
       wrappingKeys,
     );
 
-    // Collect all envelopes from DB
+    // Collect all sources and chunks from DB
     const dbManager = new DatabaseManager();
     const db = dbManager.getPersonalDb();
-    const _syncRecords = db.syncStatus.getByStatus(SyncStatus.Synced);
+    const sources = db.sources.list({}, { limit: 100000, offset: 0 });
+
+    const exportSources: Array<{
+      id: string;
+      url: string;
+      title: string;
+      tags: string[];
+      chunks: Array<{ index: number; content: string; tokenCount: number }>;
+    }> = [];
+
+    for (const source of sources) {
+      const chunks = db.chunks.getBySourceId(source.id);
+      exportSources.push({
+        id: source.id,
+        url: source.url,
+        title: source.title,
+        tags: source.tags,
+        chunks: chunks
+          .sort((a, b) => a.chunkIndex - b.chunkIndex)
+          .map((c) => ({ index: c.chunkIndex, content: c.content, tokenCount: c.tokenCount })),
+      });
+    }
+
+    // Encrypt the source data with the wrapping key
+    const sourcesJson = JSON.stringify(exportSources);
+    const sourcesEncrypted = encryption.encrypt(
+      { type: 'canary', value: sourcesJson },
+      wrappingKeys,
+    );
 
     const exportData = {
       version: 1,
@@ -108,7 +135,8 @@ async function exportEncrypted(outputDir: string): Promise<void> {
         params: { m: 262144, t: 3, p: 1 },
         ct: Buffer.from(wrappedMasterKey.bytes).toString('base64'),
       },
-      sourceCount: db.sources.count(),
+      data: Buffer.from(sourcesEncrypted.bytes).toString('base64'),
+      sourceCount: sources.length,
     };
 
     masterKey.dispose();

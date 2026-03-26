@@ -32,9 +32,14 @@
   ],
   "scripts": {
     "build": "tsc",
+    "prepublishOnly": "npm run build",
+    "prepack": "chmod +x dist/cli/index.js 2>/dev/null || true",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.27.1",

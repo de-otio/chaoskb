@@ -9,9 +9,16 @@ A personal knowledge base for saving and searching web articles. All intelligenc
 3. Everything is encrypted before leaving the device
 4. Search your knowledge base with natural language — locally, instantly
 
+## Install
+
+```bash
+npm install -g @deotio/chaoskb-client
+chaoskb-mcp setup
+```
+
 ## Clients
 
-- **Desktop** — `chaoskb-mcp`, a self-contained Rust binary that runs as an MCP server for any compatible chat agent (Claude Desktop, Claude Code, Cursor, VS Code, etc.)
+- **Desktop** — `@deotio/chaoskb-client`, an npm package that runs as an MCP server for any compatible chat agent (Claude Desktop, Claude Code, Cursor, VS Code, etc.)
 - **Mobile** (future) — Flutter app for iOS and Android
 
 ## Key properties

@@ -5,13 +5,7 @@ Install ChaosKB and save your first article in under 5 minutes.
 ## Install
 
 ```bash
-npm install -g chaoskb-mcp
-```
-
-Or via the install script (installs Node.js if needed):
-
-```bash
-curl -sSf https://chaoskb.com/install.sh | sh
+npm install -g @deotio/chaoskb-client
 ```
 
 Then set up and register with your chat agents:

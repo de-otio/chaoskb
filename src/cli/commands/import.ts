@@ -1,14 +1,15 @@
 /**
  * Import command: restore a previously exported knowledge base.
  *
- * Supports the plaintext export format (Markdown files with YAML frontmatter
- * and a manifest.json). Sources are re-chunked and re-embedded on import
- * to ensure the embedding index is consistent.
+ * Supports two formats:
+ *   - **Plaintext**: directory of Markdown files with YAML frontmatter + manifest.json
+ *   - **Encrypted**: single JSON file with Argon2id-wrapped key and encrypted source data
  */
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as crypto from 'node:crypto';
+import * as readline from 'node:readline';
 import { loadConfig } from './setup.js';
 
 export interface ImportOptions {
@@ -31,11 +32,20 @@ interface ParsedFrontmatter {
   date: string;
 }
 
+function prompt(rl: readline.Interface, question: string): Promise<string> {
+  return new Promise((resolve) => {
+    rl.question(question, (answer) => {
+      resolve(answer.trim());
+    });
+  });
+}
+
 /**
- * Import a previously exported knowledge base from a directory of Markdown files.
+ * Import a previously exported knowledge base.
  *
- * @param options - Import configuration.
- * @returns Summary of the import operation.
+ * Auto-detects format:
+ *   - If inputPath is a directory → plaintext import (Markdown files)
+ *   - If inputPath is a .json file → encrypted import
  */
 export async function importCommand(options: ImportOptions): Promise<ImportResult> {
   const config = await loadConfig();
@@ -44,14 +54,32 @@ export async function importCommand(options: ImportOptions): Promise<ImportResul
     process.exit(1);
   }
 
-  const inputDir = path.resolve(options.inputPath);
-  if (!fs.existsSync(inputDir)) {
-    throw new Error(`Import directory does not exist: ${inputDir}`);
+  const inputPath = path.resolve(options.inputPath);
+  if (!fs.existsSync(inputPath)) {
+    throw new Error(`Import path does not exist: ${inputPath}`);
   }
 
   console.log('');
   console.log('  ChaosKB Import');
   console.log('  ==============');
+  console.log('');
+
+  const stat = fs.statSync(inputPath);
+  if (stat.isDirectory()) {
+    return importPlaintext(inputPath, options);
+  }
+
+  if (inputPath.endsWith('.json')) {
+    return importEncrypted(inputPath, options);
+  }
+
+  throw new Error(`Unrecognized import format. Provide a directory (plaintext) or .json file (encrypted).`);
+}
+
+// --- Plaintext import ---
+
+async function importPlaintext(inputDir: string, options: ImportOptions): Promise<ImportResult> {
+  console.log('  Format: plaintext (Markdown files)');
   console.log('');
 
   // Load manifest if it exists
@@ -62,7 +90,6 @@ export async function importCommand(options: ImportOptions): Promise<ImportResul
     console.log(`  Found manifest with ${Object.keys(manifest!).length} entries`);
   }
 
-  // Find all .md files in the directory (excluding README, etc.)
   const mdFiles = fs.readdirSync(inputDir)
     .filter((f) => f.endsWith('.md') && f !== 'README.md')
     .sort();
@@ -75,7 +102,6 @@ export async function importCommand(options: ImportOptions): Promise<ImportResul
   console.log(`  Found ${mdFiles.length} Markdown files to import`);
   console.log('');
 
-  // Set up database and pipeline
   const { DatabaseManager } = await import('../../storage/database-manager.js');
   const dbManager = new DatabaseManager();
   const db = options.projectName
@@ -91,7 +117,6 @@ export async function importCommand(options: ImportOptions): Promise<ImportResul
       try {
         const fileContent = fs.readFileSync(filePath, 'utf-8');
 
-        // Verify SHA-256 against manifest if available
         if (manifest && manifest[mdFile]) {
           const expectedHash = manifest[mdFile].sha256;
           const actualHash = crypto.createHash('sha256').update(fileContent).digest('hex');
@@ -101,7 +126,6 @@ export async function importCommand(options: ImportOptions): Promise<ImportResul
           }
         }
 
-        // Parse frontmatter and content
         const parsed = parseFrontmatter(fileContent);
         if (!parsed) {
           result.errors.push(`${mdFile}: invalid or missing YAML frontmatter`);
@@ -110,10 +134,7 @@ export async function importCommand(options: ImportOptions): Promise<ImportResul
 
         const { frontmatter, content } = parsed;
 
-        // Check for duplicate URL
-        const existingSources = db.sources.list({
-          titleSearch: frontmatter.title,
-        });
+        const existingSources = db.sources.list({ titleSearch: frontmatter.title });
         const duplicate = existingSources.find((s) => s.url === frontmatter.url);
 
         if (duplicate && !options.overwrite) {
@@ -123,37 +144,30 @@ export async function importCommand(options: ImportOptions): Promise<ImportResul
         }
 
         if (duplicate && options.overwrite) {
-          // Remove existing source before reimporting
           db.sources.softDelete(duplicate.id);
           db.embeddingIndex.remove(duplicate.id);
           db.chunks.deleteBySourceId(duplicate.id);
         }
 
-        // Generate a new source ID
         const sourceId = crypto.randomUUID();
 
-        // Store source record
         db.sources.insert({
           id: sourceId,
           url: frontmatter.url,
           title: frontmatter.title,
           tags: frontmatter.tags,
-          chunkCount: 0, // Will be updated below
+          chunkCount: 0,
           blobSizeBytes: Buffer.byteLength(content, 'utf-8'),
         });
 
-        // Store the content as a single chunk (without re-embedding)
-        // Embeddings will need to be regenerated separately
-        const chunkRecords = [{
+        db.chunks.insertMany([{
           sourceId,
           chunkIndex: 0,
           content,
-          embedding: new Float32Array(384), // Zero vector placeholder
+          embedding: new Float32Array(384),
           tokenCount: 0,
           model: 'import-pending',
-        }];
-
-        db.chunks.insertMany(chunkRecords);
+        }]);
 
         console.log(`  Imported: ${frontmatter.title}`);
         result.imported++;
@@ -166,6 +180,171 @@ export async function importCommand(options: ImportOptions): Promise<ImportResul
     dbManager.closeAll();
   }
 
+  printSummary(result);
+  return result;
+}
+
+// --- Encrypted import ---
+
+async function importEncrypted(inputFile: string, options: ImportOptions): Promise<ImportResult> {
+  console.log('  Format: encrypted');
+  console.log('');
+
+  const rawData = fs.readFileSync(inputFile, 'utf-8');
+  const exportData = JSON.parse(rawData) as {
+    version: number;
+    format: string;
+    wrappedKey: {
+      alg: string;
+      salt: string;
+      params: { m: number; t: number; p: number };
+      ct: string;
+    };
+    data: string;
+    sourceCount: number;
+  };
+
+  if (exportData.format !== 'chaoskb-export-encrypted') {
+    throw new Error(`Unrecognized export format: ${exportData.format}`);
+  }
+
+  if (!exportData.data) {
+    throw new Error('Export file does not contain source data (may be from an older version)');
+  }
+
+  // Prompt for passphrase
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+
+  let passphrase: string;
+  try {
+    passphrase = await prompt(rl, '  Enter export passphrase: ');
+    if (!passphrase) {
+      console.log('  No passphrase provided. Import cancelled.');
+      return { imported: 0, skipped: 0, errors: [] };
+    }
+  } finally {
+    rl.close();
+  }
+
+  console.log('');
+  console.log('  Deriving wrapping key with Argon2id...');
+
+  const { EncryptionService } = await import('../../crypto/encryption-service.js');
+  const { argon2Derive } = await import('../../crypto/index.js');
+
+  // Derive the wrapping key from the passphrase
+  const salt = new Uint8Array(Buffer.from(exportData.wrappedKey.salt, 'base64'));
+  const derived = argon2Derive(passphrase, salt);
+
+  const encryption = new EncryptionService();
+  const wrappingKeys = encryption.deriveKeys(derived);
+
+  // Decrypt the source data
+  let sourcesJson: string;
+  try {
+    const dataBytes = new Uint8Array(Buffer.from(exportData.data, 'base64'));
+    const decrypted = encryption.decrypt(
+      // Reconstruct a minimal envelope from the base64 data
+      {
+        v: 1,
+        id: 'export-data',
+        ts: new Date().toISOString(),
+        enc: {
+          alg: 'XChaCha20-Poly1305' as const,
+          kid: 'CEK' as const,
+          ct: exportData.data,
+          'ct.len': dataBytes.length,
+          commit: '', // Will be verified by the decrypt function
+        },
+      },
+      wrappingKeys,
+    );
+    sourcesJson = (decrypted.payload as { value: string }).value;
+  } catch {
+    throw new Error('Failed to decrypt export data. Wrong passphrase?');
+  }
+
+  const sources = JSON.parse(sourcesJson) as Array<{
+    id: string;
+    url: string;
+    title: string;
+    tags: string[];
+    chunks: Array<{ index: number; content: string; tokenCount: number }>;
+  }>;
+
+  console.log(`  Decrypted ${sources.length} sources`);
+  console.log('');
+
+  // Import into database
+  const { DatabaseManager } = await import('../../storage/database-manager.js');
+  const dbManager = new DatabaseManager();
+  const db = options.projectName
+    ? dbManager.getProjectDb(options.projectName)
+    : dbManager.getPersonalDb();
+
+  const result: ImportResult = { imported: 0, skipped: 0, errors: [] };
+
+  try {
+    for (const source of sources) {
+      try {
+        const existingSources = db.sources.list({ titleSearch: source.title });
+        const duplicate = existingSources.find((s) => s.url === source.url);
+
+        if (duplicate && !options.overwrite) {
+          console.log(`  Skipped: ${source.title} (duplicate URL)`);
+          result.skipped++;
+          continue;
+        }
+
+        if (duplicate && options.overwrite) {
+          db.sources.softDelete(duplicate.id);
+          db.embeddingIndex.remove(duplicate.id);
+          db.chunks.deleteBySourceId(duplicate.id);
+        }
+
+        const sourceId = crypto.randomUUID();
+
+        db.sources.insert({
+          id: sourceId,
+          url: source.url,
+          title: source.title,
+          tags: source.tags,
+          chunkCount: source.chunks.length,
+          blobSizeBytes: source.chunks.reduce((sum, c) => sum + Buffer.byteLength(c.content, 'utf-8'), 0),
+        });
+
+        db.chunks.insertMany(
+          source.chunks.map((c) => ({
+            sourceId,
+            chunkIndex: c.index,
+            content: c.content,
+            embedding: new Float32Array(384), // Will need re-embedding
+            tokenCount: c.tokenCount,
+            model: 'import-pending',
+          })),
+        );
+
+        console.log(`  Imported: ${source.title} (${source.chunks.length} chunks)`);
+        result.imported++;
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        result.errors.push(`${source.title}: ${msg}`);
+      }
+    }
+  } finally {
+    dbManager.closeAll();
+  }
+
+  printSummary(result);
+  return result;
+}
+
+// --- Helpers ---
+
+function printSummary(result: ImportResult): void {
   console.log('');
   console.log(`  Summary: ${result.imported} imported, ${result.skipped} skipped, ${result.errors.length} errors`);
   if (result.errors.length > 0) {
@@ -176,25 +355,8 @@ export async function importCommand(options: ImportOptions): Promise<ImportResul
     }
   }
   console.log('');
-
-  return result;
 }
 
-/**
- * Parse YAML frontmatter from a Markdown file.
- * Expects the format produced by the export command:
- *
- * ```
- * ---
- * title: "Article Title"
- * url: https://example.com
- * tags: ["tag1", "tag2"]
- * date: 2024-01-01T00:00:00.000Z
- * ---
- *
- * Content here...
- * ```
- */
 function parseFrontmatter(
   fileContent: string,
 ): { frontmatter: ParsedFrontmatter; content: string } | null {
@@ -206,24 +368,21 @@ function parseFrontmatter(
   const yamlBlock = fmMatch[1];
   const content = fmMatch[2].trim();
 
-  // Simple YAML parser for our known format
   const title = extractYamlValue(yamlBlock, 'title') ?? '';
   const url = extractYamlValue(yamlBlock, 'url') ?? '';
   const dateStr = extractYamlValue(yamlBlock, 'date') ?? '';
 
-  // Parse tags array
   const tagsMatch = yamlBlock.match(/^tags:\s*\[(.*)\]\s*$/m);
   const tags: string[] = [];
   if (tagsMatch) {
-    const tagsStr = tagsMatch[1];
-    const tagMatches = tagsStr.matchAll(/"([^"]*)"/g);
+    const tagMatches = tagsMatch[1].matchAll(/"([^"]*)"/g);
     for (const m of tagMatches) {
       tags.push(m[1]);
     }
   }
 
   if (!url) {
-    return null; // URL is required
+    return null;
   }
 
   return {
@@ -232,11 +391,7 @@ function parseFrontmatter(
   };
 }
 
-/**
- * Extract a simple key: value or key: "value" from YAML text.
- */
 function extractYamlValue(yaml: string, key: string): string | null {
-  // Match: key: "quoted value" or key: unquoted value
   const quotedMatch = yaml.match(new RegExp(`^${key}:\\s*"((?:[^"\\\\]|\\\\.)*)"\\s*$`, 'm'));
   if (quotedMatch) {
     return quotedMatch[1].replace(/\\"/g, '"');
