@@ -1,6 +1,6 @@
 {
   "name": "@deotio/chaoskb-client",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "ChaosKB - E2E encrypted personal knowledge base with MCP integration",
   "license": "MIT",
   "repository": {
