@@ -10,6 +10,7 @@ export interface AdminApiProps {
   readonly environment: string;
   readonly table: TableV2;
   readonly allowedOrigins: string[];
+  readonly reservedConcurrency?: number;
 }
 
 export class AdminApi extends Construct {
@@ -26,7 +27,7 @@ export class AdminApi extends Construct {
       handler: 'handler',
       memorySize: 256,
       timeout: cdk.Duration.seconds(30),
-      reservedConcurrentExecutions: 5,
+      reservedConcurrentExecutions: props.reservedConcurrency ?? 5,
       tracing: Tracing.ACTIVE,
       environment: {
         TABLE_NAME: props.table.tableName,
