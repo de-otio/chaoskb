@@ -1,6 +1,6 @@
 {
   "name": "@deotio/chaoskb-server",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "ChaosKB server - CDK construct library for the hosted backend",
   "license": "MIT",
   "repository": {
@@ -8,7 +8,13 @@
     "url": "https://github.com/deotio/chaoskb.git",
     "directory": "server"
   },
-  "keywords": ["chaoskb", "knowledge-base", "aws-cdk", "dynamodb", "encrypted-sync"],
+  "keywords": [
+    "chaoskb",
+    "knowledge-base",
+    "aws-cdk",
+    "dynamodb",
+    "encrypted-sync"
+  ],
   "main": "./dist/lib/index.js",
   "types": "./dist/lib/index.d.ts",
   "exports": {
@@ -17,7 +23,9 @@
       "default": "./dist/lib/index.js"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc && cp lib/handler/*.ts dist/lib/handler/ && cp lib/handler/middleware/*.ts dist/lib/handler/middleware/ && cp lib/handler/routes/*.ts dist/lib/handler/routes/ && mkdir -p dist/lib/admin-handler/routes && cp lib/admin-handler/*.ts dist/lib/admin-handler/ && cp lib/admin-handler/routes/*.ts dist/lib/admin-handler/routes/",
     "prepublishOnly": "npm run build",
