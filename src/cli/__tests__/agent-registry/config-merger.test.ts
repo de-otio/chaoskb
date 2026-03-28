@@ -6,6 +6,18 @@ vi.mock('../../agent-registry/path-validator.js', () => ({
   validateConfigPath: vi.fn(),
 }));
 
+// Helper: expected chaoskb entry shape.
+// command is always the absolute node binary; args[0] is the MCP script path.
+function expectedChaoskbEntry(extraArgs: string[] = []) {
+  return {
+    command: process.execPath,
+    args: expect.arrayContaining([
+      expect.stringMatching(/index\.js$/),
+      ...extraArgs,
+    ]),
+  };
+}
+
 import { mergeAgentConfig, removeAgentConfig } from '../../agent-registry/config-merger.js';
 
 describe('config merger', () => {
@@ -30,10 +42,7 @@ describe('config merger', () => {
     const written = JSON.parse(writeCall[1] as string);
 
     expect(written.mcpServers.other).toEqual({ command: 'other-mcp', args: [] });
-    expect(written.mcpServers.chaoskb).toEqual({
-      command: 'chaoskb-mcp',
-      args: [],
-    });
+    expect(written.mcpServers.chaoskb).toMatchObject(expectedChaoskbEntry());
   });
 
   it('should create new config when file does not exist', async () => {
@@ -51,10 +60,7 @@ describe('config merger', () => {
     const writeCall = vi.mocked(fs.writeFileSync).mock.calls[0];
     const written = JSON.parse(writeCall[1] as string);
 
-    expect(written.mcpServers.chaoskb).toEqual({
-      command: 'chaoskb-mcp',
-      args: [],
-    });
+    expect(written.mcpServers.chaoskb).toMatchObject(expectedChaoskbEntry());
   });
 
   it('should update existing chaoskb entry', async () => {
@@ -74,10 +80,7 @@ describe('config merger', () => {
     const writeCall = vi.mocked(fs.writeFileSync).mock.calls[0];
     const written = JSON.parse(writeCall[1] as string);
 
-    expect(written.mcpServers.chaoskb).toEqual({
-      command: 'chaoskb-mcp',
-      args: ['--project', 'work'],
-    });
+    expect(written.mcpServers.chaoskb).toMatchObject(expectedChaoskbEntry(['--project', 'work']));
     // Other servers preserved
     expect(written.mcpServers.other).toEqual({ command: 'other-mcp', args: [] });
   });
@@ -120,10 +123,7 @@ describe('config merger', () => {
     const writeCall = vi.mocked(fs.writeFileSync).mock.calls[0];
     const written = JSON.parse(writeCall[1] as string);
 
-    expect(written.mcpServers.chaoskb).toEqual({
-      command: 'chaoskb-mcp',
-      args: [],
-    });
+    expect(written.mcpServers.chaoskb).toMatchObject(expectedChaoskbEntry());
   });
 
   it('should write config with 0o600 permissions', async () => {
