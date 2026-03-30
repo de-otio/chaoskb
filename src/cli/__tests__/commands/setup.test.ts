@@ -5,12 +5,6 @@ import * as os from 'node:os';
 
 // Mock fs before importing the module
 vi.mock('node:fs');
-vi.mock('node:readline', () => ({
-  createInterface: vi.fn().mockReturnValue({
-    question: vi.fn(),
-    close: vi.fn(),
-  }),
-}));
 
 describe('setup command', () => {
   const homeDir = os.homedir();
@@ -79,6 +73,20 @@ describe('setup command', () => {
     it('should point to ~/.chaoskb', async () => {
       const { CHAOSKB_DIR } = await import('../../commands/setup.js');
       expect(CHAOSKB_DIR).toBe(chaoskbDir);
+    });
+  });
+
+  describe('setupCommand', () => {
+    it('should report already configured when config exists', async () => {
+      const mockConfig = { securityTier: 'standard', projects: [] };
+      vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify(mockConfig));
+      const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+      const { setupCommand } = await import('../../commands/setup.js');
+      await setupCommand();
+
+      expect(consoleSpy).toHaveBeenCalledWith('ChaosKB is already configured.');
+      consoleSpy.mockRestore();
     });
   });
 });

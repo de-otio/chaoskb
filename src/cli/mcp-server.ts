@@ -214,10 +214,16 @@ export async function startMcpServer(options: McpServerOptions): Promise<void> {
   }
 
   if (!config) {
-    console.error(
-      'ChaosKB is not set up. Run `chaoskb-mcp setup` first.',
-    );
-    process.exit(1);
+    // Auto-bootstrap on first launch
+    process.stderr.write('First launch — setting up ChaosKB...\n');
+    const { bootstrap } = await import('./bootstrap.js');
+    await bootstrap();
+    config = await loadConfig();
+    if (!config) {
+      process.stderr.write('Bootstrap failed. See ~/.chaoskb/ for details.\n');
+      process.exit(1);
+    }
+    process.stderr.write('ChaosKB is ready.\n');
   }
 
   // These would be real implementations in production.
@@ -256,9 +262,21 @@ async function initializeDependencies(
   } else {
     const keyring = new KeyringService();
     masterKey = await keyring.retrieve('chaoskb', 'master-key');
+    if (!masterKey && process.env.CHAOSKB_KEY_STORAGE === 'file') {
+      // File-based key fallback
+      const { FILE_KEY_PATH } = await import('./bootstrap.js');
+      const fs = await import('node:fs');
+      try {
+        const hex = fs.readFileSync(FILE_KEY_PATH, 'utf-8').trim();
+        const { SecureBuffer } = await import('../crypto/secure-buffer.js');
+        masterKey = SecureBuffer.from(Buffer.from(hex, 'hex'));
+      } catch {
+        // Fall through to the error below
+      }
+    }
     if (!masterKey) {
       throw new Error(
-        'Master key not found in OS keyring. Run `chaoskb-mcp setup` first.',
+        'Master key not found. Run `chaoskb-mcp setup` or ensure your OS keyring is accessible.',
       );
     }
   }

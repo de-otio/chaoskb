@@ -5,13 +5,13 @@ import { createRequire } from 'node:module';
 import { startMcpServer } from './mcp-server.js';
 import { setupCommand } from './commands/setup.js';
 import { setupSyncCommand } from './commands/setup-sync.js';
-import { registerCommand } from './commands/register.js';
 import { unregisterCommand } from './commands/unregister.js';
 import { statusCommand } from './commands/status.js';
 import { exportCommand } from './commands/export.js';
 import { importCommand } from './commands/import.js';
 import { projectCommand } from './commands/project.js';
 import { uninstallCommand } from './commands/uninstall.js';
+import { upgradeTierCommand } from './commands/config.js';
 
 const require = createRequire(import.meta.url);
 const pkg = require('../../package.json') as { version: string };
@@ -47,7 +47,7 @@ async function main(): Promise<void> {
 
   program
     .command('setup')
-    .description('Interactive first-time setup')
+    .description('Set up ChaosKB (auto-bootstraps if needed)')
     .action(async () => {
       await setupCommand();
     });
@@ -60,23 +60,21 @@ async function main(): Promise<void> {
     });
 
   program
-    .command('register')
-    .description('Register ChaosKB with installed agents')
-    .option('--agent <name>', 'register with specific agent')
-    .option('--project <name>', 'register for a project KB')
-    .action(async (opts: { agent?: string; project?: string }) => {
-      const globalProject = program.opts().project as string | undefined;
-      await registerCommand({
-        agentName: opts.agent,
-        projectName: opts.project ?? globalProject,
-      });
-    });
-
-  program
     .command('unregister')
     .description('Remove ChaosKB from all agent configs')
     .action(async () => {
       await unregisterCommand();
+    });
+
+  const config = program
+    .command('config')
+    .description('Manage ChaosKB configuration');
+
+  config
+    .command('upgrade-tier <tier>')
+    .description('Upgrade security tier (enhanced or maximum)')
+    .action(async (tier: string) => {
+      await upgradeTierCommand(tier);
     });
 
   program
