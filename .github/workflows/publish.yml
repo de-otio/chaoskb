@@ -36,10 +36,6 @@ jobs:
 
       - name: Publish server package
         run: npm publish --workspace=server --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish client package
         run: npm publish --workspace=src --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
