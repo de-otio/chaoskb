@@ -2,6 +2,20 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { loadConfig, saveConfig, CHAOSKB_DIR } from './setup.js';
 import type { ChaosKBConfig } from '../mcp-server.js';
+import { SequenceCounter } from '../../sync/sequence.js';
+
+const sequence = new SequenceCounter();
+
+/** Convert signRequest result to fetch-compatible headers. */
+function toHeaders(result: { authorization: string; timestamp: string; sequence: number; publicKey: string }, extra?: Record<string, string>): Record<string, string> {
+  return {
+    Authorization: result.authorization,
+    'X-ChaosKB-Timestamp': result.timestamp,
+    'X-ChaosKB-Sequence': String(result.sequence),
+    'X-ChaosKB-PublicKey': result.publicKey,
+    ...extra,
+  };
+}
 
 export interface SharedProjectMeta {
   name: string;
@@ -29,9 +43,9 @@ export async function projectListAvailable(config: ChaosKBConfig): Promise<Share
   const signer = new SSHSigner(config.sshKeyPath!);
 
   const url = `${config.endpoint}/v1/projects/available`;
-  const headers = await signer.signRequest('GET', '/v1/projects/available');
+  const signed = await signer.signRequest('GET', '/v1/projects/available', sequence.next());
 
-  const res = await fetch(url, { method: 'GET', headers });
+  const res = await fetch(url, { method: 'GET', headers: toHeaders(signed) });
 
   if (!res.ok) {
     const body = await res.text();
@@ -93,9 +107,9 @@ export async function projectEnable(config: ChaosKBConfig, projectName: string):
 
   // Download encrypted project key
   const keyUrl = `${config.endpoint}/v1/projects/${encodeURIComponent(projectName)}/key`;
-  const keyHeaders = await signer.signRequest('GET', `/v1/projects/${encodeURIComponent(projectName)}/key`);
+  const keyHeaders = await signer.signRequest('GET', `/v1/projects/${encodeURIComponent(projectName)}/key`, sequence.next());
 
-  const keyRes = await fetch(keyUrl, { method: 'GET', headers: keyHeaders });
+  const keyRes = await fetch(keyUrl, { method: 'GET', headers: toHeaders(keyHeaders) });
 
   if (!keyRes.ok) {
     const body = await keyRes.text();
@@ -177,11 +191,11 @@ export async function projectAccept(config: ChaosKBConfig, projectName: string):
 
   // Accept the invite via server
   const acceptUrl = `${config.endpoint}/v1/invites/${encodeURIComponent(projectName)}/accept`;
-  const acceptHeaders = await signer.signRequest('POST', `/v1/invites/${encodeURIComponent(projectName)}/accept`);
+  const acceptHeaders = await signer.signRequest('POST', `/v1/invites/${encodeURIComponent(projectName)}/accept`, sequence.next());
 
   const acceptRes = await fetch(acceptUrl, {
     method: 'POST',
-    headers: { ...acceptHeaders, 'Content-Type': 'application/json' },
+    headers: toHeaders(acceptHeaders, { 'Content-Type': 'application/json' }),
     body: JSON.stringify({}),
   });
 
@@ -214,11 +228,11 @@ export async function projectDecline(
   const signer = new SSHSigner(config.sshKeyPath!);
 
   const declineUrl = `${config.endpoint}/v1/invites/${encodeURIComponent(projectName)}/decline`;
-  const declineHeaders = await signer.signRequest('POST', `/v1/invites/${encodeURIComponent(projectName)}/decline`);
+  const declineHeaders = await signer.signRequest('POST', `/v1/invites/${encodeURIComponent(projectName)}/decline`, sequence.next());
 
   const declineRes = await fetch(declineUrl, {
     method: 'POST',
-    headers: { ...declineHeaders, 'Content-Type': 'application/json' },
+    headers: toHeaders(declineHeaders, { 'Content-Type': 'application/json' }),
     body: JSON.stringify({ block: block ?? null }),
   });
 

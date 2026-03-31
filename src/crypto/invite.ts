@@ -1,6 +1,9 @@
 import { createHash, randomBytes } from 'node:crypto';
 import sodium from 'sodium-native';
 
+// sodium-native types are incomplete — these functions exist at runtime
+const sodiumAny = sodium as any;
+
 import { aeadEncrypt, aeadDecrypt } from './aead.js';
 import { deriveKey } from './hkdf.js';
 import { ed25519ToX25519PublicKey, ed25519ToX25519SecretKey } from './ssh-keys.js';
@@ -30,14 +33,14 @@ export function createInviteBlob(
   // Generate ephemeral X25519 key pair
   const ephPk = Buffer.alloc(sodium.crypto_box_PUBLICKEYBYTES);
   const ephSk = Buffer.alloc(sodium.crypto_box_SECRETKEYBYTES);
-  sodium.crypto_box_keypair(ephPk, ephSk);
+  sodiumAny.crypto_box_keypair(ephPk, ephSk);
 
   // Convert recipient Ed25519 public key to X25519
   const recipientX25519Pk = ed25519ToX25519PublicKey(recipientKeyInfo.publicKeyBytes);
 
   // ECDH: shared_secret = X25519(ephemeral_secret, recipient_x25519_public)
-  const sharedSecret = Buffer.alloc(sodium.crypto_scalarmult_BYTES);
-  sodium.crypto_scalarmult(sharedSecret, ephSk, Buffer.from(recipientX25519Pk));
+  const sharedSecret = Buffer.alloc(sodiumAny.crypto_scalarmult_BYTES);
+  sodiumAny.crypto_scalarmult(sharedSecret, ephSk, Buffer.from(recipientX25519Pk));
 
   // Derive encryption key with domain separation
   const info = buildInviteHkdfInfo(senderKeyInfo.fingerprint, recipientKeyInfo.fingerprint, projectId);
@@ -97,8 +100,8 @@ export function openInviteBlob(
   const recipientX25519Sk = ed25519ToX25519SecretKey(recipientEd25519Sk);
 
   // ECDH: shared_secret = X25519(recipient_x25519_secret, ephemeral_public)
-  const sharedSecret = Buffer.alloc(sodium.crypto_scalarmult_BYTES);
-  sodium.crypto_scalarmult(sharedSecret, Buffer.from(recipientX25519Sk), Buffer.from(ephPk));
+  const sharedSecret = Buffer.alloc(sodiumAny.crypto_scalarmult_BYTES);
+  sodiumAny.crypto_scalarmult(sharedSecret, Buffer.from(recipientX25519Sk), Buffer.from(ephPk));
 
   // Derive same encryption key
   const info = buildInviteHkdfInfo(senderKeyInfo.fingerprint, recipientKeyInfo.fingerprint, projectId);
