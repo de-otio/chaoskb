@@ -131,7 +131,7 @@ describe('projects commands', () => {
       expect(mockKeyringStore).toHaveBeenCalledWith(
         'chaoskb/project-team-docs',
         'key',
-        'enc-key-data',
+        expect.objectContaining({ buffer: expect.any(Buffer) }),
       );
 
       // Config should be saved with the new project

@@ -128,7 +128,9 @@ export async function projectEnable(config: ChaosKBConfig, projectName: string):
   // and store the decrypted key. For now, store the encrypted key directly.
   const { KeyringService } = await import('../../crypto/keyring.js');
   const keyring = new KeyringService();
-  await keyring.store(`chaoskb/project-${projectName}`, 'key', keyData.encryptedKey);
+  const { SecureBuffer } = await import('../../crypto/secure-buffer.js');
+  const keyBuf = SecureBuffer.from(Buffer.from(keyData.encryptedKey, 'base64'));
+  await keyring.store(`chaoskb/project-${projectName}`, 'key', keyBuf);
 
   // Add to config
   config.projects.push({ name: projectName, createdAt: new Date().toISOString() });

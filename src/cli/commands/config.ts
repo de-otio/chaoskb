@@ -81,11 +81,7 @@ export async function upgradeTierCommand(tier: string): Promise<void> {
   }
 
   try {
-    if (tier === 'enhanced') {
-      await upgradeToEnhanced(masterKey, config);
-    } else {
-      await upgradeToMaximum(masterKey, config);
-    }
+    await upgradeToMaximum(masterKey, config);
   } finally {
     masterKey.dispose();
   }

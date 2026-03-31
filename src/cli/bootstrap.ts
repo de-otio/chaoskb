@@ -218,18 +218,19 @@ async function detectSSHKey(): Promise<SSHDetectionResult> {
  * Never written to disk. Returns null if keyring is unavailable.
  */
 async function generateFallbackKey(): Promise<SSHDetectionResult | null> {
-  const sodium = (await import('sodium-native')).default;
+  const sodium = (await import('sodium-native')).default as any;
   const { KeyringService } = await import('../crypto/keyring.js');
 
-  const pk = Buffer.alloc(sodium.crypto_sign_PUBLICKEYBYTES);
-  const sk = Buffer.alloc(sodium.crypto_sign_SECRETKEYBYTES);
+  const pk = Buffer.alloc(sodium.crypto_sign_PUBLICKEYBYTES as number);
+  const sk = Buffer.alloc(sodium.crypto_sign_SECRETKEYBYTES as number);
   sodium.crypto_sign_keypair(pk, sk);
 
   try {
     // Store secret key in keyring only (never on disk)
     const keyring = new KeyringService();
-    await keyring.store('chaoskb', 'identity-secret', { buffer: sk, length: sk.length, dispose: () => sk.fill(0) } as import('../crypto/types.js').ISecureBuffer);
-    await keyring.store('chaoskb', 'identity-public', { buffer: pk, length: pk.length, dispose: () => {} } as import('../crypto/types.js').ISecureBuffer);
+    const { SecureBuffer } = await import('../crypto/secure-buffer.js');
+    await keyring.store('chaoskb', 'identity-secret', SecureBuffer.from(sk));
+    await keyring.store('chaoskb', 'identity-public', SecureBuffer.from(pk));
   } catch {
     sk.fill(0);
     return null;
@@ -454,9 +455,9 @@ async function restoreMasterKey(
       const seed = derBuf.subarray(seedOffset + 2, seedOffset + 34);
 
       // Generate the full 64-byte secret key from the seed
-      const sodium = (await import('sodium-native')).default;
-      const fullSk = Buffer.alloc(sodium.crypto_sign_SECRETKEYBYTES);
-      const fullPk = Buffer.alloc(sodium.crypto_sign_PUBLICKEYBYTES);
+      const sodium = (await import('sodium-native')).default as any;
+      const fullSk = Buffer.alloc(sodium.crypto_sign_SECRETKEYBYTES as number);
+      const fullPk = Buffer.alloc(sodium.crypto_sign_PUBLICKEYBYTES as number);
       sodium.crypto_sign_seed_keypair(fullPk, fullSk, seed);
 
       const masterKey = unwrapMasterKeyEd25519(wrappedBlob, fullSk, fullPk);
