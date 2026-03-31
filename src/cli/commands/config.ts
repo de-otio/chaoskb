@@ -22,14 +22,20 @@ function prompt(rl: readline.Interface, question: string): Promise<string> {
 /**
  * Upgrade security tier.
  *
- * Standard → Enhanced: encode master key as BIP39 mnemonic, display to user.
  * Standard → Maximum: re-wrap master key under Argon2id-derived key from passphrase.
  * Enhanced → Maximum: same as above, with note that mnemonic is invalidated.
+ *
+ * Note: The Enhanced tier (BIP39 mnemonic) is deprecated. New upgrades only
+ * support "maximum". Existing Enhanced-tier users can still upgrade to Maximum.
  */
 export async function upgradeTierCommand(tier: string): Promise<void> {
-  // Validate tier argument
-  if (tier !== 'enhanced' && tier !== 'maximum') {
-    console.error(`Invalid tier: "${tier}". Must be "enhanced" or "maximum".`);
+  // Validate tier argument — only 'maximum' is accepted for new upgrades
+  if (tier !== 'maximum') {
+    if (tier === 'enhanced') {
+      console.error('The "enhanced" tier is deprecated. Use "maximum" instead.');
+    } else {
+      console.error(`Invalid tier: "${tier}". Must be "maximum".`);
+    }
     process.exitCode = 1;
     return;
   }

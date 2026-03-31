@@ -44,8 +44,8 @@ describe('checkRateLimit', () => {
     expect(result.retryAfter).toBeGreaterThan(0);
   });
 
-  it('should reject request over GET limit (300/min)', async () => {
-    mockSend.mockResolvedValueOnce({ Attributes: { count: 301 } });
+  it('should reject request over GET limit (1000/min)', async () => {
+    mockSend.mockResolvedValueOnce({ Attributes: { count: 1001 } });
 
     const result = await checkRateLimit(TENANT_ID, 'GET', ddb, TABLE_NAME);
 
@@ -53,16 +53,16 @@ describe('checkRateLimit', () => {
     expect(result.remaining).toBe(0);
   });
 
-  it('should reject request over DELETE limit (50/min)', async () => {
-    mockSend.mockResolvedValueOnce({ Attributes: { count: 51 } });
+  it('should reject request over DELETE limit (100/min)', async () => {
+    mockSend.mockResolvedValueOnce({ Attributes: { count: 101 } });
 
     const result = await checkRateLimit(TENANT_ID, 'DELETE', ddb, TABLE_NAME);
 
     expect(result.allowed).toBe(false);
   });
 
-  it('should reject request over LIST limit (10/min)', async () => {
-    mockSend.mockResolvedValueOnce({ Attributes: { count: 11 } });
+  it('should reject request over LIST limit (100/min)', async () => {
+    mockSend.mockResolvedValueOnce({ Attributes: { count: 101 } });
 
     const result = await checkRateLimit(TENANT_ID, 'LIST', ddb, TABLE_NAME);
 
@@ -76,11 +76,11 @@ describe('checkRateLimit', () => {
     expect(putResult.allowed).toBe(true);
     expect(putResult.remaining).toBe(0);
 
-    // GET at 100 — should still have plenty of room
+    // GET at 100 — should still have plenty of room (1000 limit)
     mockSend.mockResolvedValueOnce({ Attributes: { count: 100 } });
     const getResult = await checkRateLimit(TENANT_ID, 'GET', ddb, TABLE_NAME);
     expect(getResult.allowed).toBe(true);
-    expect(getResult.remaining).toBe(200); // 300 - 100
+    expect(getResult.remaining).toBe(900); // 1000 - 100
   });
 });
 

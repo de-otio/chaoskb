@@ -6,8 +6,10 @@ import type { SyncConfig } from '../types.js';
 function createMockSigner(): SSHSigner {
   return {
     signRequest: vi.fn().mockResolvedValue({
-      authorization: 'ChaosKB-SSH pubkey=dGVzdA==, ts=2026-03-20T10:00:00.000Z, sig=c2ln',
+      authorization: 'SSH-Signature c2ln',
       timestamp: '2026-03-20T10:00:00.000Z',
+      sequence: 1,
+      publicKey: 'dGVzdA==',
     }),
   } as unknown as SSHSigner;
 }
@@ -64,7 +66,7 @@ describe('SyncHttpClient', () => {
         expect.objectContaining({
           method: 'GET',
           headers: expect.objectContaining({
-            Authorization: expect.stringContaining('ChaosKB-SSH'),
+            Authorization: expect.stringContaining('SSH-Signature'),
           }),
         }),
       );
@@ -188,7 +190,7 @@ describe('SyncHttpClient', () => {
       const body = new Uint8Array([10, 20]);
       await client.put('/v1/blobs/b_xyz', body);
 
-      expect(mockSigner.signRequest).toHaveBeenCalledWith('PUT', '/v1/blobs/b_xyz', body);
+      expect(mockSigner.signRequest).toHaveBeenCalledWith('PUT', '/v1/blobs/b_xyz', expect.any(Number), body);
     });
   });
 });

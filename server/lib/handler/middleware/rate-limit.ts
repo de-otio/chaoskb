@@ -8,9 +8,9 @@ export interface RateLimitResult {
 
 const LIMITS: Record<string, number> = {
   PUT: 100,
-  GET: 300,
-  DELETE: 50,
-  LIST: 10,
+  GET: 1000,
+  DELETE: 100,
+  LIST: 100,
 };
 
 const WINDOW_SECONDS = 60;
@@ -57,6 +57,49 @@ export async function checkRateLimit(
   }
 
   return { allowed: true, remaining };
+}
+
+/**
+ * Rate limit by source IP for unauthenticated endpoints (registration, contact).
+ * Stricter than per-tenant limits: 1 request per second per IP.
+ */
+export async function checkIpRateLimit(
+  sourceIp: string,
+  operation: string,
+  ddb: DynamoDBDocumentClient,
+  tableName: string,
+  limit = 1,
+): Promise<RateLimitResult> {
+  const now = Math.floor(Date.now() / 1000);
+  const windowKey = now; // 1-second windows for IP limits
+  const ttl = now + 120;
+
+  const result = await ddb.send(
+    new UpdateCommand({
+      TableName: tableName,
+      Key: {
+        PK: `RATE#IP#${sourceIp}`,
+        SK: `${operation}#${windowKey}`,
+      },
+      UpdateExpression: 'SET #count = if_not_exists(#count, :zero) + :one, #ttl = :ttl',
+      ExpressionAttributeNames: {
+        '#count': 'count',
+        '#ttl': 'ttl',
+      },
+      ExpressionAttributeValues: {
+        ':zero': 0,
+        ':one': 1,
+        ':ttl': ttl,
+      },
+      ReturnValues: 'UPDATED_NEW',
+    }),
+  );
+
+  const currentCount = (result.Attributes?.['count'] as number) ?? 1;
+  if (currentCount > limit) {
+    return { allowed: false, remaining: 0, retryAfter: 1 };
+  }
+  return { allowed: true, remaining: Math.max(0, limit - currentCount) };
 }
 
 export function rateLimitHeaders(result: RateLimitResult): Record<string, string> {

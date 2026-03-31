@@ -13,8 +13,9 @@ A personal knowledge base for saving and searching web articles. All intelligenc
 
 ```bash
 npm install -g @deotio/chaoskb-client
-chaoskb-mcp setup
 ```
+
+That's it. On first launch, ChaosKB detects your SSH key, enables sync automatically, and encrypts your data with your public key. No setup commands, no accounts, no configuration.
 
 ## Clients
 
@@ -33,13 +34,12 @@ chaoskb-mcp setup
 
 ## Security tiers
 
-| Tier | Who it's for | Recovery |
-|------|-------------|----------|
-| **Standard** (default) | Most users | Automatic via account |
-| **Enhanced** | Privacy-conscious users | 24-word recovery key |
-| **Maximum** | Journalists, activists, high-risk users | Passphrase only |
+| Tier | Key management | Recovery |
+|------|---------------|----------|
+| **Standard** (default) | Your SSH key | Same SSH key on new device restores everything |
+| **Maximum** | Passphrase you choose | Re-enter passphrase on new device |
 
-Standard tier uses client-side encryption with server-assisted recovery. Enhanced and Maximum are end-to-end encrypted — the server cannot access your data under any circumstances.
+Both tiers are end-to-end encrypted — the server stores only ciphertext it cannot decrypt. Lose your SSH key or forget your passphrase, and your data is gone. No backdoor, no recovery phrase, no server-side key escrow.
 
 ## Self-hosting
 

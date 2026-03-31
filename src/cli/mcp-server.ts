@@ -12,6 +12,7 @@ import { handleKbQuery } from './tools/kb-query.js';
 import { handleKbList } from './tools/kb-list.js';
 import { handleKbDelete } from './tools/kb-delete.js';
 import { handleKbSummary } from './tools/kb-summary.js';
+import { handleKbQueryShared } from './tools/kb-query-shared.js';
 
 export interface McpServerOptions {
   projectName?: string;
@@ -115,6 +116,28 @@ const TOOL_DEFINITIONS = [
       required: ['period'],
     },
   },
+  {
+    name: 'kb_query_shared',
+    description:
+      'Search a shared project knowledge base. Like kb_query but includes content attribution (project name, uploader) in each result for provenance tracking.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        query: { type: 'string', description: 'Search query' },
+        project: { type: 'string', description: 'Shared project name to search' },
+        limit: {
+          type: 'number',
+          description: 'Maximum number of results to return (default: 10)',
+        },
+        mode: {
+          type: 'string',
+          enum: ['semantic', 'keyword', 'hybrid'],
+          description: 'Search mode: "semantic" (default), "keyword", or "hybrid"',
+        },
+      },
+      required: ['query', 'project'],
+    },
+  },
 ];
 
 export function createMcpServer(deps: McpDependencies): Server {
@@ -177,6 +200,18 @@ export function createMcpServer(deps: McpDependencies): Server {
           const result = await handleKbSummary(
             {
               period: (args as Record<string, unknown>).period as string,
+            },
+            deps,
+          );
+          return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+        }
+        case 'kb_query_shared': {
+          const result = await handleKbQueryShared(
+            {
+              query: (args as Record<string, unknown>).query as string,
+              project: (args as Record<string, unknown>).project as string,
+              limit: (args as Record<string, unknown>).limit as number | undefined,
+              mode: (args as Record<string, unknown>).mode as 'semantic' | 'keyword' | 'hybrid' | undefined,
             },
             deps,
           );
@@ -406,6 +441,9 @@ async function unlockMaximumTierKey(): Promise<import('../crypto/types.js').ISec
 export interface ChaosKBConfig {
   endpoint?: string;
   sshKeyPath?: string;
+  sshKeyFingerprint?: string;
+  syncEnabled?: boolean;
+  syncPending?: boolean;
   securityTier: string;
   projects: Array<{ name: string; createdAt: string }>;
 }

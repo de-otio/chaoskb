@@ -1,6 +1,7 @@
 import type { ISyncHttpClient } from './types.js';
 import type { SyncConfig } from './types.js';
 import type { SSHSigner } from './ssh-signer.js';
+import { SequenceCounter } from './sequence.js';
 
 /** Error that indicates the request can be retried after a delay. */
 export class RetryableError extends Error {
@@ -26,8 +27,10 @@ const REQUEST_TIMEOUT_MS = 30_000;
 export class SyncHttpClient implements ISyncHttpClient {
   private readonly baseUrl: string;
   private readonly signer: SSHSigner;
+  private readonly sequence: SequenceCounter;
 
-  constructor(config: SyncConfig, signer: SSHSigner) {
+  constructor(config: SyncConfig, signer: SSHSigner, sequence?: SequenceCounter) {
+    this.sequence = sequence ?? new SequenceCounter();
     if (!config.endpoint.startsWith('https://')) {
       throw new Error(
         `TLS required: endpoint must start with https://, got "${config.endpoint}"`,
@@ -55,11 +58,14 @@ export class SyncHttpClient implements ISyncHttpClient {
   }
 
   private async request(method: string, path: string, body?: Uint8Array): Promise<Response> {
-    const { authorization, timestamp } = await this.signer.signRequest(method, path, body);
+    const seq = this.sequence.next();
+    const result = await this.signer.signRequest(method, path, seq, body);
 
     const headers: Record<string, string> = {
-      Authorization: authorization,
-      'X-Timestamp': timestamp,
+      Authorization: result.authorization,
+      'X-ChaosKB-Timestamp': result.timestamp,
+      'X-ChaosKB-Sequence': String(result.sequence),
+      'X-ChaosKB-PublicKey': result.publicKey,
     };
 
     if (body) {

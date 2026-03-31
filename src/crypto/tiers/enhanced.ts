@@ -1,3 +1,11 @@
+// Enhanced tier removed — see doc/analysis/zero-config-sync/security-tiers.md
+// This file is deprecated. The zero-config sync implementation uses only two tiers:
+//   - Standard: SSH key wrapping (automatic, zero-config)
+//   - Maximum: Argon2id passphrase derivation
+// The Enhanced (BIP39 mnemonic) tier added complexity without meaningful security
+// benefit over the Standard tier's SSH-based recovery. Retained for backward
+// compatibility with existing Enhanced-tier users.
+
 import * as bip39 from 'bip39';
 
 import { SecureBuffer } from '../secure-buffer.js';
@@ -7,6 +15,8 @@ import type { ISecureBuffer } from '../types.js';
 export { wrapMasterKey, unwrapMasterKeyEd25519, unwrapMasterKeyRSA } from './standard.js';
 
 /**
+ * @deprecated Enhanced tier is deprecated. New installations use Standard or Maximum only.
+ *
  * Enhanced tier: BIP39 24-word recovery key.
  *
  * The master key is a 256-bit random value which maps directly to a 24-word
@@ -14,6 +24,8 @@ export { wrapMasterKey, unwrapMasterKeyEd25519, unwrapMasterKeyRSA } from './sta
  */
 
 /**
+ * @deprecated Use Standard tier (SSH key wrapping) instead.
+ *
  * Encode a 256-bit master key as a 24-word BIP39 mnemonic.
  * The master key bytes are used directly as the entropy.
  */
@@ -28,6 +40,8 @@ export function generateRecoveryKey(masterKey: ISecureBuffer): string {
 }
 
 /**
+ * @deprecated Use Standard tier (SSH key wrapping) instead.
+ *
  * Decode a 24-word BIP39 mnemonic back to the 256-bit master key.
  * Returns a SecureBuffer containing the recovered key.
  */

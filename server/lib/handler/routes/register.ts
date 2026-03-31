@@ -1,5 +1,6 @@
 import * as crypto from 'crypto';
 import { DynamoDBDocumentClient, PutCommand } from '@aws-sdk/lib-dynamodb';
+import { logAuditEvent } from './audit.js';
 import { GetParameterCommand, SSMClient } from '@aws-sdk/client-ssm';
 import { logger } from '../logger.js';
 
@@ -133,6 +134,12 @@ export async function handleRegister(
     );
 
     logger.info('Tenant registered', { tenantId, operation: 'register' });
+
+    await logAuditEvent(ddb, tableName, tenantId, {
+      eventType: 'registered',
+      fingerprint: '',
+      metadata: { publicKey: request.publicKey },
+    });
 
     return {
       statusCode: 201,

@@ -108,7 +108,7 @@ describe('MCP server startup', () => {
   });
 
   it('should register all expected tools', () => {
-    expect(TOOL_DEFINITIONS).toHaveLength(5);
+    expect(TOOL_DEFINITIONS).toHaveLength(6);
 
     const toolNames = TOOL_DEFINITIONS.map((t) => t.name);
     expect(toolNames).toContain('kb_ingest');
@@ -116,6 +116,7 @@ describe('MCP server startup', () => {
     expect(toolNames).toContain('kb_list');
     expect(toolNames).toContain('kb_delete');
     expect(toolNames).toContain('kb_summary');
+    expect(toolNames).toContain('kb_query_shared');
   });
 
   it('should have valid input schemas for all tools', () => {

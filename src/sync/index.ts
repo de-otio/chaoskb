@@ -1,5 +1,6 @@
 export * from './types.js';
 export { SSHSigner } from './ssh-signer.js';
+export { SequenceCounter } from './sequence.js';
 export { SyncHttpClient, RetryableError } from './http-client.js';
 export { incrementalSync } from './incremental-sync.js';
 export { fullSync } from './full-sync.js';

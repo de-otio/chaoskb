@@ -18,25 +18,33 @@ export class SSHSigner {
   }
 
   /**
-   * Sign an HTTP request, returning the Authorization header value and timestamp.
+   * Sign an HTTP request, returning headers for authentication.
    */
   async signRequest(
     method: string,
     path: string,
+    sequence: number,
     body?: Uint8Array,
-  ): Promise<{ authorization: string; timestamp: string }> {
+  ): Promise<{
+    authorization: string;
+    timestamp: string;
+    sequence: number;
+    publicKey: string;
+  }> {
     const timestamp = new Date().toISOString();
     const bodyHash = this.computeBodyHash(body);
-    const canonical = this.buildCanonical(method, path, timestamp, bodyHash);
+    const canonical = this.buildCanonical(method, path, timestamp, sequence, bodyHash);
 
     const publicKeyRaw = await this.readPublicKey();
     const signature = await this.signCanonical(canonical);
-
-    const base64PubKey = Buffer.from(publicKeyRaw).toString('base64');
     const base64Sig = signature.toString('base64');
 
-    const authorization = `ChaosKB-SSH pubkey=${base64PubKey}, ts=${timestamp}, sig=${base64Sig}`;
-    return { authorization, timestamp };
+    // Extract the base64 key blob from the public key line (ssh-ed25519 AAAA... comment)
+    const parts = publicKeyRaw.split(/\s+/);
+    const publicKey = parts.length >= 2 ? parts[1] : publicKeyRaw;
+
+    const authorization = `SSH-Signature ${base64Sig}`;
+    return { authorization, timestamp, sequence, publicKey };
   }
 
   /**
@@ -51,9 +59,19 @@ export class SSHSigner {
 
   /**
    * Build the canonical string to be signed.
+   *
+   * Format: chaoskb-auth\nMETHOD PATH\nTIMESTAMP\nSEQUENCE\nBODY_HASH
+   * The sequence number prevents replay attacks — the server rejects
+   * any sequence <= the highest it has seen for this device.
    */
-  buildCanonical(method: string, path: string, timestamp: string, bodyHash: string): string {
-    return `chaoskb-auth\n${method} ${path}\n${timestamp}\n${bodyHash}`;
+  buildCanonical(
+    method: string,
+    path: string,
+    timestamp: string,
+    sequence: number,
+    bodyHash: string,
+  ): string {
+    return `chaoskb-auth\n${method} ${path}\n${timestamp}\n${sequence}\n${bodyHash}`;
   }
 
   /**

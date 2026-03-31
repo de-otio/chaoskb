@@ -76,7 +76,8 @@ describe('bootstrap', () => {
     const configPath = path.join(chaoskbDir, 'config.json');
     expect(fs.existsSync(configPath)).toBe(true);
     const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-    expect(config).toEqual({ securityTier: 'standard', projects: [] });
+    expect(config.securityTier).toBe('standard');
+    expect(config.projects).toEqual([]);
 
     // Config has secure permissions (0o600)
     const configStat = fs.statSync(configPath);

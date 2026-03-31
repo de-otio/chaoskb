@@ -73,10 +73,18 @@ describe('config upgrade-tier', () => {
       );
     });
 
+    it('should reject deprecated enhanced tier', async () => {
+      await upgradeTierCommand('enhanced');
+      expect(process.exitCode).toBe(1);
+      expect(console.error).toHaveBeenCalledWith(
+        expect.stringContaining('deprecated'),
+      );
+    });
+
     it('should error when not configured', async () => {
       vi.mocked(loadConfig).mockResolvedValue(null);
 
-      await upgradeTierCommand('enhanced');
+      await upgradeTierCommand('maximum');
       expect(process.exitCode).toBe(1);
       expect(console.error).toHaveBeenCalledWith(
         expect.stringContaining('not configured'),
@@ -85,24 +93,11 @@ describe('config upgrade-tier', () => {
 
     it('should error when already at requested tier', async () => {
       vi.mocked(loadConfig).mockResolvedValue({
-        securityTier: 'enhanced',
-        projects: [],
-      });
-
-      await upgradeTierCommand('enhanced');
-      expect(process.exitCode).toBe(1);
-      expect(console.error).toHaveBeenCalledWith(
-        expect.stringContaining('Already at'),
-      );
-    });
-
-    it('should error when already at higher tier', async () => {
-      vi.mocked(loadConfig).mockResolvedValue({
         securityTier: 'maximum',
         projects: [],
       });
 
-      await upgradeTierCommand('enhanced');
+      await upgradeTierCommand('maximum');
       expect(process.exitCode).toBe(1);
       expect(console.error).toHaveBeenCalledWith(
         expect.stringContaining('Already at'),
@@ -115,7 +110,7 @@ describe('config upgrade-tier', () => {
         projects: [],
       });
 
-      await upgradeTierCommand('enhanced');
+      await upgradeTierCommand('maximum');
       expect(process.exitCode).toBe(1);
       expect(console.error).toHaveBeenCalledWith(
         expect.stringContaining('Master key not found'),
@@ -147,94 +142,6 @@ describe('config upgrade-tier', () => {
       } finally {
         Object.defineProperty(process.stdin, 'isTTY', { value: originalIsTTY, configurable: true });
       }
-    });
-  });
-
-  describe('upgrade to enhanced (happy path)', () => {
-    it('should generate BIP39 mnemonic and update config', async () => {
-      // Use a real 32-byte key so BIP39 encoding works
-      const keyBytes = Buffer.alloc(32);
-      for (let i = 0; i < 32; i++) keyBytes[i] = i;
-      const mockMasterKey = {
-        buffer: keyBytes,
-        length: 32,
-        isDisposed: false,
-        dispose: vi.fn(),
-      };
-
-      vi.mocked(loadConfig).mockResolvedValue({
-        securityTier: 'standard',
-        projects: [],
-      });
-      mockRetrieve.mockResolvedValueOnce(mockMasterKey);
-
-      // We need to figure out what the mnemonic words will be to provide correct answers.
-      // Generate the mnemonic ourselves to know the words.
-      const bip39 = await import('bip39');
-      const expectedMnemonic = bip39.entropyToMnemonic(keyBytes.toString('hex'));
-      const expectedWords = expectedMnemonic.split(' ');
-
-      // The spot-check asks for 2 random words — we provide all 24 so any index works
-      mockAnswers = expectedWords;
-      // Override pickRandomIndices behavior by providing all words — any index will match
-      // Actually the readline mock just returns answers sequentially, so we need the exact indices.
-      // Since pickRandomIndices uses Math.random, let's seed it.
-      // Simpler: just provide all 24 words as answers; the code only asks for 2.
-      // The question callback will be called with index 0, then 1, which gives words[0] and words[1].
-      // But pickRandomIndices picks random indices, not 0 and 1.
-      // The readline mock returns mockAnswers[answerIndex++], so answer 0 and answer 1.
-      // We need those to match words[randomIndex1] and words[randomIndex2].
-      // Let's mock Math.random to return predictable values.
-      const mathRandomSpy = vi.spyOn(Math, 'random')
-        .mockReturnValueOnce(0 / 24)   // index 0
-        .mockReturnValueOnce(5 / 24);  // index 5
-
-      mockAnswers = [expectedWords[0], expectedWords[5]];
-
-      await upgradeTierCommand('enhanced');
-
-      expect(process.exitCode).toBeUndefined();
-      expect(saveConfig).toHaveBeenCalledWith(
-        expect.objectContaining({ securityTier: 'enhanced' }),
-      );
-      // Verify mnemonic was displayed
-      expect(console.log).toHaveBeenCalledWith(
-        expect.stringContaining('recovery key'),
-      );
-      expect(mockMasterKey.dispose).toHaveBeenCalled();
-
-      mathRandomSpy.mockRestore();
-    });
-
-    it('should cancel if spot-check word is wrong', async () => {
-      const keyBytes = Buffer.alloc(32, 0x42);
-      const mockMasterKey = {
-        buffer: keyBytes,
-        length: 32,
-        isDisposed: false,
-        dispose: vi.fn(),
-      };
-
-      vi.mocked(loadConfig).mockResolvedValue({
-        securityTier: 'standard',
-        projects: [],
-      });
-      mockRetrieve.mockResolvedValueOnce(mockMasterKey);
-
-      vi.spyOn(Math, 'random')
-        .mockReturnValueOnce(0 / 24)
-        .mockReturnValueOnce(1 / 24);
-
-      // Provide wrong answers
-      mockAnswers = ['wrongword', 'alsowrong'];
-
-      await upgradeTierCommand('enhanced');
-
-      expect(process.exitCode).toBe(1);
-      expect(console.error).toHaveBeenCalledWith(
-        expect.stringContaining('Incorrect'),
-      );
-      expect(saveConfig).not.toHaveBeenCalled();
     });
   });
 

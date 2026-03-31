@@ -23,7 +23,7 @@ export type KeyId = 'CEK' | 'MEK' | 'EEK';
 export enum SecurityTier {
   /** SSH key wrapping (crypto_box_seal for Ed25519, RSA-OAEP KEM+DEM for RSA) */
   Standard = 'standard',
-  /** BIP39 24-word recovery key + SSH key */
+  /** @deprecated BIP39 24-word recovery key + SSH key. Use Standard or Maximum instead. */
   Enhanced = 'enhanced',
   /** Argon2id passphrase derivation, no recovery */
   Maximum = 'maximum',

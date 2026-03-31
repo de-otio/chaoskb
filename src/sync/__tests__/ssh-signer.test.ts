@@ -33,14 +33,14 @@ describe('SSHSigner', () => {
   describe('buildCanonical', () => {
     it('should construct the canonical string correctly', () => {
       const signer = new SSHSigner(keyPath);
-      const canonical = signer.buildCanonical('PUT', '/v1/blobs/b_abc123', '2026-03-20T10:00:00.000Z', 'deadbeef');
-      expect(canonical).toBe('chaoskb-auth\nPUT /v1/blobs/b_abc123\n2026-03-20T10:00:00.000Z\ndeadbeef');
+      const canonical = signer.buildCanonical('PUT', '/v1/blobs/b_abc123', '2026-03-20T10:00:00.000Z', 1, 'deadbeef');
+      expect(canonical).toBe('chaoskb-auth\nPUT /v1/blobs/b_abc123\n2026-03-20T10:00:00.000Z\n1\ndeadbeef');
     });
 
     it('should handle GET with empty body hash', () => {
       const signer = new SSHSigner(keyPath);
-      const canonical = signer.buildCanonical('GET', '/v1/blobs', '2026-03-20T10:00:00.000Z', '');
-      expect(canonical).toBe('chaoskb-auth\nGET /v1/blobs\n2026-03-20T10:00:00.000Z\n');
+      const canonical = signer.buildCanonical('GET', '/v1/blobs', '2026-03-20T10:00:00.000Z', 1, '');
+      expect(canonical).toBe('chaoskb-auth\nGET /v1/blobs\n2026-03-20T10:00:00.000Z\n1\n');
     });
   });
 
@@ -69,7 +69,7 @@ describe('SSHSigner', () => {
     it('should generate ISO 8601 timestamp in signRequest', async () => {
       const signer = new SSHSigner(keyPath);
       const before = new Date().toISOString();
-      const { timestamp } = await signer.signRequest('GET', '/v1/blobs');
+      const { timestamp } = await signer.signRequest('GET', '/v1/blobs', 1);
       const after = new Date().toISOString();
 
       // Timestamp should be a valid ISO string between before and after
@@ -82,20 +82,19 @@ describe('SSHSigner', () => {
   describe('signRequest', () => {
     it('should return authorization header with correct format', async () => {
       const signer = new SSHSigner(keyPath);
-      const { authorization, timestamp } = await signer.signRequest('GET', '/v1/blobs');
+      const { authorization, timestamp, sequence } = await signer.signRequest('GET', '/v1/blobs', 1);
 
-      expect(authorization).toMatch(/^ChaosKB-SSH pubkey=.+, ts=.+, sig=.+$/);
-      expect(authorization).toContain(`ts=${timestamp}`);
-      expect(authorization).toContain('pubkey=');
-      expect(authorization).toContain('sig=');
+      expect(authorization).toMatch(/^SSH-Signature .+$/);
+      expect(timestamp).toBeTruthy();
+      expect(sequence).toBe(1);
     });
 
     it('should include body hash in canonical string for PUT', async () => {
       const signer = new SSHSigner(keyPath);
       const body = new Uint8Array([1, 2, 3, 4]);
-      const { authorization } = await signer.signRequest('PUT', '/v1/blobs/b_test', body);
+      const { authorization } = await signer.signRequest('PUT', '/v1/blobs/b_test', 2, body);
 
-      expect(authorization).toMatch(/^ChaosKB-SSH /);
+      expect(authorization).toMatch(/^SSH-Signature /);
     });
   });
 });
