@@ -15,7 +15,8 @@ import { loadConfig, saveConfig } from './setup.js';
  * 6. Uploads new wrapped blob to /v1/wrapped-key
  * 7. Updates config with new key fingerprint and keyPath
  */
-export async function rotateKeyCommand(newKeyPath?: string): Promise<void> {
+export async function rotateKeyCommand(newKeyPath?: string, options?: { dryRun?: boolean }): Promise<void> {
+  const dryRun = options?.dryRun ?? false;
   const config = await loadConfig();
   if (!config) {
     console.error('ChaosKB is not configured. Run `chaoskb-mcp setup` first.');
@@ -75,6 +76,20 @@ export async function rotateKeyCommand(newKeyPath?: string): Promise<void> {
       process.exitCode = 1;
       return;
     }
+  }
+
+  if (dryRun) {
+    console.log('[dry-run] Would rotate SSH key for sync.');
+    console.log('[dry-run]   Current key: %s', config.sshKeyFingerprint);
+    console.log('[dry-run]   New key:     %s', newKeyInfo.fingerprint);
+    console.log('[dry-run] This will:');
+    console.log('[dry-run]   - Re-wrap the master key with the new SSH public key');
+    console.log('[dry-run]   - Call POST /v1/rotate-start on the sync server');
+    console.log('[dry-run]   - Upload new wrapped key blob to /v1/wrapped-key');
+    console.log('[dry-run]   - Update config with new key fingerprint');
+    console.log('[dry-run] No changes made.');
+    masterKey.dispose();
+    return;
   }
 
   try {

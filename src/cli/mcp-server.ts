@@ -40,6 +40,10 @@ const TOOL_DEFINITIONS = [
           items: { type: 'string' },
           description: 'Optional tags to assign to the source',
         },
+        kb: {
+          type: 'string',
+          description: 'Named KB to ingest into (required when multiple KBs exist, defaults to active KB)',
+        },
       },
       required: ['url'],
     },
@@ -47,7 +51,7 @@ const TOOL_DEFINITIONS = [
   {
     name: 'kb_query',
     description:
-      'Search the knowledge base. Supports semantic (embedding) search, keyword (FTS5) search, or hybrid (both combined).',
+      'Search the knowledge base. Supports semantic (embedding) search, keyword (FTS5) search, or hybrid (both combined). Without a kb parameter, searches all KBs and merges results.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -61,6 +65,10 @@ const TOOL_DEFINITIONS = [
           enum: ['semantic', 'keyword', 'hybrid'],
           description: 'Search mode: "semantic" (default) for meaning-based, "keyword" for exact text match, "hybrid" for combined ranking',
         },
+        kb: {
+          type: 'string',
+          description: 'Named KB to search (omit to search all KBs)',
+        },
       },
       required: ['query'],
     },
@@ -68,7 +76,7 @@ const TOOL_DEFINITIONS = [
   {
     name: 'kb_list',
     description:
-      'List saved sources in the knowledge base with metadata.',
+      'List saved sources in the knowledge base with metadata. Without a kb parameter, lists sources across all KBs.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -84,6 +92,10 @@ const TOOL_DEFINITIONS = [
           type: 'array',
           items: { type: 'string' },
           description: 'Filter by tags',
+        },
+        kb: {
+          type: 'string',
+          description: 'Named KB to list (omit to list all KBs)',
         },
       },
     },

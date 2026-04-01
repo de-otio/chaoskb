@@ -59,9 +59,14 @@ export async function checkRateLimit(
   return { allowed: true, remaining };
 }
 
+// Per-IP window sizes: LINK_CONFIRM uses 5-second windows, others use 1-second
+const IP_WINDOW_SECONDS: Record<string, number> = {
+  LINK_CONFIRM: 5,
+};
+
 /**
  * Rate limit by source IP for unauthenticated endpoints (registration, contact).
- * Stricter than per-tenant limits: 1 request per second per IP.
+ * Default: 1 request per second per IP. LINK_CONFIRM: 1 request per 5 seconds.
  */
 export async function checkIpRateLimit(
   sourceIp: string,
@@ -71,7 +76,8 @@ export async function checkIpRateLimit(
   limit = 1,
 ): Promise<RateLimitResult> {
   const now = Math.floor(Date.now() / 1000);
-  const windowKey = now; // 1-second windows for IP limits
+  const windowSec = IP_WINDOW_SECONDS[operation] ?? 1;
+  const windowKey = Math.floor(now / windowSec);
   const ttl = now + 120;
 
   const result = await ddb.send(
@@ -97,7 +103,9 @@ export async function checkIpRateLimit(
 
   const currentCount = (result.Attributes?.['count'] as number) ?? 1;
   if (currentCount > limit) {
-    return { allowed: false, remaining: 0, retryAfter: 1 };
+    const windowEnd = (windowKey + 1) * windowSec;
+    const retryAfter = Math.max(1, windowEnd - now);
+    return { allowed: false, remaining: 0, retryAfter };
   }
   return { allowed: true, remaining: Math.max(0, limit - currentCount) };
 }

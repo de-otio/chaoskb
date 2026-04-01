@@ -19,6 +19,7 @@ import {
 } from './commands/projects.js';
 import { uninstallCommand } from './commands/uninstall.js';
 import { upgradeTierCommand } from './commands/config.js';
+import { rotateKeyCommand } from './commands/rotate-key.js';
 import { devicesAddCommand, devicesListCommand, devicesRemoveCommand } from './commands/devices.js';
 
 const require = createRequire(import.meta.url);
@@ -81,8 +82,18 @@ async function main(): Promise<void> {
   config
     .command('upgrade-tier <tier>')
     .description('Upgrade security tier to maximum (passphrase-protected)')
-    .action(async (tier: string) => {
-      await upgradeTierCommand(tier);
+    .option('--dry-run', 'show what would happen without making changes')
+    .action(async (tier: string, opts: { dryRun?: boolean }) => {
+      await upgradeTierCommand(tier, { dryRun: opts.dryRun });
+    });
+
+  config
+    .command('rotate-key')
+    .description('Rotate the SSH key used for sync')
+    .option('--new-key <path>', 'path to the new SSH private key')
+    .option('--dry-run', 'show what would happen without making changes')
+    .action(async (opts: { newKey?: string; dryRun?: boolean }) => {
+      await rotateKeyCommand(opts.newKey, { dryRun: opts.dryRun });
     });
 
   program
@@ -123,8 +134,9 @@ async function main(): Promise<void> {
   program
     .command('uninstall')
     .description('Remove all ChaosKB data and agent registrations')
-    .action(async () => {
-      await uninstallCommand();
+    .option('--dry-run', 'show what would be removed without making changes')
+    .action(async (opts: { dryRun?: boolean }) => {
+      await uninstallCommand({ dryRun: opts.dryRun });
     });
 
   const project = program

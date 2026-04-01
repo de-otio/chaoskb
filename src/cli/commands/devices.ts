@@ -91,7 +91,7 @@ export async function devicesAddCommand(): Promise<void> {
   const { signedFetch } = await createSyncClient();
 
   // 1. Generate link code
-  const linkCode = generateLinkCode(8);
+  const linkCode = generateLinkCode(10);
   const codeHash = hashCode(linkCode);
 
   // 2. Send hash to server

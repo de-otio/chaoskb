@@ -264,8 +264,9 @@ describe('DELETE /v1/devices/{fingerprint}', () => {
     mockSend.mockReset();
   });
 
-  it('should delete device and wrapped key', async () => {
-    // Two DeleteCommands: KEY# and WRAPPED_KEY#
+  it('should delete device, wrapped key, and create notification', async () => {
+    // Two DeleteCommands (KEY# and WRAPPED_KEY#) + one PutCommand (notification)
+    mockSend.mockResolvedValueOnce({});
     mockSend.mockResolvedValueOnce({});
     mockSend.mockResolvedValueOnce({});
 
@@ -273,6 +274,6 @@ describe('DELETE /v1/devices/{fingerprint}', () => {
 
     expect(result.statusCode).toBe(200);
     expect(JSON.parse(result.body).status).toBe('deleted');
-    expect(mockSend).toHaveBeenCalledTimes(2);
+    expect(mockSend).toHaveBeenCalledTimes(3);
   });
 });

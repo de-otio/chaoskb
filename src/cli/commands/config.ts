@@ -28,7 +28,8 @@ function prompt(rl: readline.Interface, question: string): Promise<string> {
  * Note: The Enhanced tier (BIP39 mnemonic) is deprecated. New upgrades only
  * support "maximum". Existing Enhanced-tier users can still upgrade to Maximum.
  */
-export async function upgradeTierCommand(tier: string): Promise<void> {
+export async function upgradeTierCommand(tier: string, options?: { dryRun?: boolean }): Promise<void> {
+  const dryRun = options?.dryRun ?? false;
   // Validate tier argument — only 'maximum' is accepted for new upgrades
   if (tier !== 'maximum') {
     if (tier === 'enhanced') {
@@ -78,6 +79,18 @@ export async function upgradeTierCommand(tier: string): Promise<void> {
       process.exitCode = 1;
       return;
     }
+  }
+
+  if (dryRun) {
+    console.log('[dry-run] Would upgrade security tier from "%s" to "%s".', config.securityTier, tier);
+    console.log('[dry-run] This will:');
+    console.log('[dry-run]   - Derive a wrapping key from your passphrase using Argon2id');
+    console.log('[dry-run]   - Encrypt the master key with the wrapping key');
+    console.log('[dry-run]   - Write encrypted key blob to ~/.chaoskb/master-key.enc');
+    console.log('[dry-run]   - Remove the master key from the OS keyring');
+    console.log('[dry-run] No changes made.');
+    masterKey.dispose();
+    return;
   }
 
   try {

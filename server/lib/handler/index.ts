@@ -4,7 +4,7 @@ import { logger } from './logger.js';
 import { authenticateRequest, AuthError } from './middleware/ssh-auth.js';
 import { checkIpRateLimit, rateLimitHeaders } from './middleware/rate-limit.js';
 import { handleHealth } from './routes/health.js';
-import { handleRegister } from './routes/register.js';
+import { handleRegister, handleChallenge } from './routes/register.js';
 import {
   handlePutBlob,
   handleGetBlob,
@@ -33,6 +33,7 @@ import {
   handleDeclineInvite,
 } from './routes/invites.js';
 import { handleListAvailableProjects } from './routes/projects.js';
+import { handleGetNotifications, handleDismissNotification } from './routes/notifications.js';
 
 interface LambdaFunctionURLEvent {
   requestContext: {
@@ -97,6 +98,22 @@ export const handler = async (event: LambdaFunctionURLEvent): Promise<LambdaFunc
     // Health check — no auth
     if (method === 'GET' && path === '/health') {
       const result = handleHealth();
+      return response(result.statusCode, result.body, result.headers);
+    }
+
+    // Registration challenge — no auth, IP rate limited
+    if (method === 'GET' && path === '/v1/register/challenge') {
+      const sourceIp = event.headers['x-forwarded-for']?.split(',')[0]?.trim()
+        ?? event.requestContext.http.sourceIp
+        ?? 'unknown';
+      const rateCheck = await checkIpRateLimit(sourceIp, 'CHALLENGE', ddb, TABLE_NAME);
+      if (!rateCheck.allowed) {
+        return response(429, JSON.stringify({ error: 'rate_limited', message: 'Too many requests' }), {
+          'Content-Type': 'application/json',
+          ...rateLimitHeaders(rateCheck),
+        });
+      }
+      const result = await handleChallenge(ddb, TABLE_NAME);
       return response(result.statusCode, result.body, result.headers);
     }
 
@@ -306,6 +323,19 @@ export const handler = async (event: LambdaFunctionURLEvent): Promise<LambdaFunc
         const result = await handleDeclineInvite(tenantId, auth.fingerprint, inviteId, event.body, ddb, TABLE_NAME);
         return response(result.statusCode, result.body, result.headers);
       }
+    }
+
+    // Notifications
+    if (path === '/v1/notifications' && method === 'GET') {
+      const result = await handleGetNotifications(tenantId, ddb, TABLE_NAME);
+      return response(result.statusCode, result.body, result.headers);
+    }
+
+    const notificationDismissMatch = path.match(/^\/v1\/notifications\/(.+)\/dismiss$/);
+    if (notificationDismissMatch && method === 'POST') {
+      const notificationId = decodeURIComponent(notificationDismissMatch[1]);
+      const result = await handleDismissNotification(tenantId, notificationId, ddb, TABLE_NAME);
+      return response(result.statusCode, result.body, result.headers);
     }
 
     // Shared projects

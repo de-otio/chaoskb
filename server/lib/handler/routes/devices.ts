@@ -8,6 +8,7 @@ import {
   UpdateCommand,
 } from '@aws-sdk/lib-dynamodb';
 import { logger } from '../logger.js';
+import { createNotification } from './notifications.js';
 
 interface HandlerResponse {
   statusCode: number;
@@ -441,6 +442,11 @@ export async function handleDeleteDevice(
       },
     }),
   );
+
+  // Create revocation notification for remaining devices
+  await createNotification(tenantId, 'device_revoked', {
+    hostname: fingerprint,
+  }, ddb, tableName);
 
   logger.info('Device removed', { tenantId, fingerprint });
 

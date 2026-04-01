@@ -14,7 +14,8 @@ function prompt(question: string): Promise<boolean> {
   });
 }
 
-export async function uninstallCommand(): Promise<void> {
+export async function uninstallCommand(options?: { dryRun?: boolean }): Promise<void> {
+  const dryRun = options?.dryRun ?? false;
   console.log('');
   console.log('  ChaosKB Uninstall');
   console.log('  =================');
@@ -50,6 +51,12 @@ export async function uninstallCommand(): Promise<void> {
     console.log(`  Local data directory:`);
     console.log(`    ${CHAOSKB_DIR}`);
     console.log('');
+  }
+
+  if (dryRun) {
+    console.log('  [dry-run] No changes made.');
+    console.log('');
+    return;
   }
 
   const confirmed = await prompt('  This cannot be undone. Proceed? [y/N] ');

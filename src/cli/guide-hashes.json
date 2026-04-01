@@ -1,0 +1,13 @@
+{
+  "description": "SHA-256 hashes of agent guide files served at chaoskb.com. Used to verify guide integrity after fetching.",
+  "baseUrl": "https://chaoskb.com",
+  "hashes": {
+    "/install-agent.md": "7dfdb8f38e1afd4f2ba79e25b81b9e5e5293387e43e28a05f38976c2b885a458",
+    "/agent-guide/sync.md": "c7d6e450856671c16f68abf09bb8f1611cec45d55c78bff4e9d1fb33e574a92e",
+    "/agent-guide/project-kbs.md": "d76ffea08781241703bcd1eeb2bd2b857548e922184458e534d4101868d962e4",
+    "/agent-guide/dual-identity.md": "acd58681f31916672937c7afb16a0da28f108b59a15689207818923ef4e61c93",
+    "/agent-guide/security.md": "50e38969d4b6cd8512bfecc990e08621ccd26d234d907937ec703b18d84b93a9",
+    "/agent-guide/troubleshooting.md": "dcb5becfd4b72a1610a324195542d996f8736b7f63e6974923c099e32f232380",
+    "/agent-guide/uninstall.md": "3890752375e501698e9b9799060ba9a45f768da7288aff492d7310c53b26f859"
+  }
+}
