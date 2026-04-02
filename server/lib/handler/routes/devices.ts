@@ -9,6 +9,7 @@ import {
 } from '@aws-sdk/lib-dynamodb';
 import { logger } from '../logger.js';
 import { createNotification } from './notifications.js';
+import { logAuditEvent } from './audit.js';
 
 interface HandlerResponse {
   statusCode: number;
@@ -447,6 +448,13 @@ export async function handleDeleteDevice(
   await createNotification(tenantId, 'device_revoked', {
     hostname: fingerprint,
   }, ddb, tableName);
+
+  // Audit event
+  await logAuditEvent(ddb, tableName, tenantId, {
+    eventType: 'device-removed',
+    fingerprint,
+    metadata: { removedBy: 'owner' },
+  });
 
   logger.info('Device removed', { tenantId, fingerprint });
 

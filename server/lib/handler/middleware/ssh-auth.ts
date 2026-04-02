@@ -239,6 +239,16 @@ export async function authenticateRequest(
   );
 
   if (!result.Items || result.Items.length === 0) {
+    // Perform a dummy signature verification to equalize timing with the
+    // tenant-exists path. Without this, an attacker can distinguish
+    // "tenant not found" (fast) from "bad signature" (slow) by measuring
+    // response time.
+    const dummyKey = Buffer.alloc(32, 0x01).toString('base64');
+    try {
+      verifyEd25519Signature(dummyKey, 'dummy', 'dummy');
+    } catch {
+      // Expected to fail — this is just for timing equalization
+    }
     throw new AuthError('Unknown public key', 401);
   }
 

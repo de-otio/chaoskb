@@ -1,21 +1,24 @@
 import * as crypto from 'crypto';
-import { DynamoDBDocumentClient, PutCommand, GetCommand, DeleteCommand } from '@aws-sdk/lib-dynamodb';
+import { DynamoDBDocumentClient, PutCommand, DeleteCommand } from '@aws-sdk/lib-dynamodb';
 import { logAuditEvent } from './audit.js';
 import { GetParameterCommand, SSMClient } from '@aws-sdk/client-ssm';
 import { logger } from '../logger.js';
 import {
   verifyKeyOnGitHub,
+  fetchGitHubKeysFresh,
+  keyAppearsInGitHubKeys,
   storeGitHubAssociation,
   storeGitHubReverseLookup,
   findTenantByGitHub,
-  GitHubVerificationError,
 } from './github.js';
+import { createNotification, resolveIpLocation, type DeviceInfo } from './notifications.js';
 
 interface RegisterRequest {
   publicKey: string;
   signedChallenge: string;
   challengeNonce: string;
   github?: string;
+  deviceInfo?: DeviceInfo;
 }
 
 interface HandlerResponse {
@@ -147,6 +150,7 @@ export async function handleRegister(
   ddb: DynamoDBDocumentClient,
   tableName: string,
   signupsParamName: string,
+  headers: Record<string, string> = {},
 ): Promise<HandlerResponse> {
   // Check if signups are enabled
   const signupsEnabled = await checkSignupsEnabled(signupsParamName);
@@ -202,48 +206,41 @@ export async function handleRegister(
     };
   }
 
-  // Look up and consume the challenge nonce (single-use)
-  const challengeResult = await ddb.send(
-    new GetCommand({
-      TableName: tableName,
-      Key: {
-        PK: `CHALLENGE#${request.challengeNonce}`,
-        SK: 'META',
-      },
-    }),
-  );
-
-  if (!challengeResult.Item) {
-    return {
-      statusCode: 400,
-      headers: JSON_HEADERS,
-      body: JSON.stringify({ error: 'invalid_challenge', message: 'Challenge not found or already used' }),
-    };
-  }
-
-  // Check challenge expiry
-  if (new Date(challengeResult.Item['expiresAt'] as string) < new Date()) {
-    // Clean up expired challenge
-    await ddb.send(
+  // Atomically consume the challenge nonce (single-use).
+  // Uses conditional delete to prevent TOCTOU race: only one request can consume a given nonce.
+  let challengeItem: Record<string, unknown> | undefined;
+  try {
+    const deleteResult = await ddb.send(
       new DeleteCommand({
         TableName: tableName,
-        Key: { PK: `CHALLENGE#${request.challengeNonce}`, SK: 'META' },
+        Key: {
+          PK: `CHALLENGE#${request.challengeNonce}`,
+          SK: 'META',
+        },
+        ConditionExpression: 'attribute_exists(PK)',
+        ReturnValues: 'ALL_OLD',
       }),
     );
+    challengeItem = deleteResult.Attributes;
+  } catch (err: unknown) {
+    if ((err as { name?: string }).name === 'ConditionalCheckFailedException') {
+      return {
+        statusCode: 400,
+        headers: JSON_HEADERS,
+        body: JSON.stringify({ error: 'invalid_challenge', message: 'Challenge not found or already used' }),
+      };
+    }
+    throw err;
+  }
+
+  // Check challenge expiry on the consumed item
+  if (!challengeItem || new Date(challengeItem['expiresAt'] as string) < new Date()) {
     return {
       statusCode: 400,
       headers: JSON_HEADERS,
       body: JSON.stringify({ error: 'challenge_expired', message: 'Challenge has expired' }),
     };
   }
-
-  // Consume the challenge (delete it — single-use)
-  await ddb.send(
-    new DeleteCommand({
-      TableName: tableName,
-      Key: { PK: `CHALLENGE#${request.challengeNonce}`, SK: 'META' },
-    }),
-  );
 
   // Verify the SSH signature of the challenge nonce against the public key
   const validSignature = verifyRegistrationSignature(
@@ -263,45 +260,84 @@ export async function handleRegister(
 
   // GitHub verification (if --github was provided)
   if (request.github) {
+    let keyVerified = false;
     try {
-      const keyOnGitHub = await verifyKeyOnGitHub(request.publicKey, request.github);
-      if (!keyOnGitHub) {
-        return {
-          statusCode: 400,
-          headers: JSON_HEADERS,
-          body: JSON.stringify({
-            error: 'github_key_not_found',
-            message: `Public key not found on GitHub account "${request.github}"`,
-          }),
-        };
-      }
-    } catch (err) {
-      if (err instanceof GitHubVerificationError) {
-        return {
-          statusCode: 400,
-          headers: JSON_HEADERS,
-          body: JSON.stringify({ error: err.code, message: err.message }),
-        };
-      }
-      throw err;
+      keyVerified = await verifyKeyOnGitHub(request.publicKey, request.github);
+    } catch {
+      // GitHub unreachable or user not found — uniform response
+    }
+
+    if (!keyVerified) {
+      return {
+        statusCode: 400,
+        headers: JSON_HEADERS,
+        body: JSON.stringify({
+          error: 'github_verification_failed',
+          message: 'Could not verify key against this GitHub account',
+        }),
+      };
     }
 
     // Check if an existing tenant is associated with this GitHub username (auto-link)
     const existingTenantId = await findTenantByGitHub(request.github, ddb, tableName);
     if (existingTenantId) {
-      logger.info('GitHub auto-link: existing tenant found', {
-        existingTenantId,
-        github: request.github,
-      });
-      return {
-        statusCode: 200,
-        headers: JSON_HEADERS,
-        body: JSON.stringify({
-          status: 'auto_linked',
-          tenantId: existingTenantId,
+      // Fresh-fetch GitHub keys (bypass cache) to ensure both device keys still appear
+      let freshKeys: string[];
+      try {
+        freshKeys = await fetchGitHubKeysFresh(request.github);
+      } catch {
+        // GitHub unreachable at auto-link time — fall back to normal registration
+        freshKeys = [];
+      }
+
+      // Verify the new device's key appears on the GitHub account (fresh data)
+      if (freshKeys.length > 0 && !keyAppearsInGitHubKeys(request.publicKey, freshKeys)) {
+        return {
+          statusCode: 400,
+          headers: JSON_HEADERS,
+          body: JSON.stringify({
+            error: 'github_verification_failed',
+            message: 'Could not verify key against this GitHub account',
+          }),
+        };
+      }
+
+      if (freshKeys.length > 0) {
+        // Resolve location from CloudFront headers for the notification
+        const location = resolveIpLocation(headers);
+        const deviceInfo: DeviceInfo = {
+          ...request.deviceInfo,
+          location,
+        };
+
+        // Create notification for existing devices
+        await createNotification(existingTenantId, 'device_linked', deviceInfo, ddb, tableName);
+
+        // Audit event
+        await logAuditEvent(ddb, tableName, existingTenantId, {
+          eventType: 'device-linked',
+          fingerprint: '',
+          metadata: {
+            publicKey: request.publicKey,
+            github: request.github,
+            ...(deviceInfo.hostname && { hostname: deviceInfo.hostname }),
+          },
+        });
+
+        logger.info('GitHub auto-link: existing tenant found', {
+          existingTenantId,
           github: request.github,
-        }),
-      };
+        });
+        return {
+          statusCode: 200,
+          headers: JSON_HEADERS,
+          body: JSON.stringify({
+            status: 'auto_linked',
+            github: request.github,
+          }),
+        };
+      }
+      // If fresh keys unavailable, fall through to normal registration
     }
   }
 
@@ -328,8 +364,19 @@ export async function handleRegister(
 
     // Store GitHub association if provided
     if (request.github) {
+      const claimed = await storeGitHubReverseLookup(request.github, tenantId, ddb, tableName);
+      if (!claimed) {
+        // Another tenant already claimed this GitHub username — uniform error
+        return {
+          statusCode: 400,
+          headers: JSON_HEADERS,
+          body: JSON.stringify({
+            error: 'github_verification_failed',
+            message: 'Could not verify key against this GitHub account',
+          }),
+        };
+      }
       await storeGitHubAssociation(tenantId, request.github, ddb, tableName);
-      await storeGitHubReverseLookup(request.github, tenantId, ddb, tableName);
     }
 
     await logAuditEvent(ddb, tableName, tenantId, {

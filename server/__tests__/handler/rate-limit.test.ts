@@ -13,7 +13,7 @@ vi.mock('@aws-sdk/client-dynamodb', () => ({
   DynamoDBClient: vi.fn().mockImplementation(function () {}),
 }));
 
-import { checkRateLimit, rateLimitHeaders } from '../../lib/handler/middleware/rate-limit.js';
+import { checkRateLimit, checkIpRateLimit, rateLimitHeaders } from '../../lib/handler/middleware/rate-limit.js';
 
 const TABLE_NAME = 'chaoskb-test';
 const TENANT_ID = 'test-tenant-123';
@@ -81,6 +81,48 @@ describe('checkRateLimit', () => {
     const getResult = await checkRateLimit(TENANT_ID, 'GET', ddb, TABLE_NAME);
     expect(getResult.allowed).toBe(true);
     expect(getResult.remaining).toBe(900); // 1000 - 100
+  });
+});
+
+describe('checkIpRateLimit — REGISTER_GITHUB', () => {
+  beforeEach(() => {
+    mockSend.mockReset();
+  });
+
+  it('should allow up to 5 requests per 60-second window', async () => {
+    mockSend.mockResolvedValueOnce({ Attributes: { count: 5 } });
+
+    const result = await checkIpRateLimit('1.2.3.4', 'REGISTER_GITHUB', ddb, TABLE_NAME);
+
+    expect(result.allowed).toBe(true);
+    expect(result.remaining).toBe(0); // 5 - 5
+  });
+
+  it('should reject 6th GitHub registration attempt within window', async () => {
+    mockSend.mockResolvedValueOnce({ Attributes: { count: 6 } });
+
+    const result = await checkIpRateLimit('1.2.3.4', 'REGISTER_GITHUB', ddb, TABLE_NAME);
+
+    expect(result.allowed).toBe(false);
+    expect(result.remaining).toBe(0);
+    expect(result.retryAfter).toBeGreaterThan(0);
+  });
+
+  it('should not affect non-GitHub registrations (default 1/sec)', async () => {
+    // REGISTER uses 1-second windows with limit 1
+    mockSend.mockResolvedValueOnce({ Attributes: { count: 1 } });
+
+    const result = await checkIpRateLimit('1.2.3.4', 'REGISTER', ddb, TABLE_NAME);
+
+    expect(result.allowed).toBe(true);
+    expect(result.remaining).toBe(0); // 1 - 1
+
+    // 2nd request in same second rejected
+    mockSend.mockResolvedValueOnce({ Attributes: { count: 2 } });
+
+    const result2 = await checkIpRateLimit('1.2.3.4', 'REGISTER', ddb, TABLE_NAME);
+
+    expect(result2.allowed).toBe(false);
   });
 });
 

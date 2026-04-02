@@ -162,49 +162,95 @@ export function createMcpServer(deps: McpDependencies): Server {
     tools: TOOL_DEFINITIONS,
   }));
 
+  /** Resolve deps for a specific named KB, or use defaults. */
+  function resolveDeps(kbName?: string): McpDependencies {
+    if (!kbName) return deps;
+    return {
+      ...deps,
+      db: deps.dbManager.getNamedKBDb(kbName),
+    };
+  }
+
+  /** Get deps for all named KBs (for cross-KB search). */
+  function getAllKBDeps(): McpDependencies[] {
+    try {
+      const { listKBs } = require('./commands/kb.js') as { listKBs: () => Array<{ name: string }> };
+      const kbs = listKBs();
+      if (kbs.length === 0) return [deps]; // No named KBs, use default
+      return kbs.map((kb) => ({
+        ...deps,
+        db: deps.dbManager.getNamedKBDb(kb.name),
+      }));
+    } catch {
+      return [deps];
+    }
+  }
+
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
 
     try {
       switch (name) {
         case 'kb_ingest': {
+          const kbArg = (args as Record<string, unknown>).kb as string | undefined;
           const result = await handleKbIngest(
             {
               url: (args as Record<string, unknown>).url as string,
               tags: (args as Record<string, unknown>).tags as string[] | undefined,
             },
-            deps,
+            resolveDeps(kbArg),
           );
           return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
         }
         case 'kb_query': {
-          const result = await handleKbQuery(
-            {
-              query: (args as Record<string, unknown>).query as string,
-              limit: (args as Record<string, unknown>).limit as number | undefined,
-              mode: (args as Record<string, unknown>).mode as 'semantic' | 'keyword' | 'hybrid' | undefined,
-            },
-            deps,
+          const kbArg = (args as Record<string, unknown>).kb as string | undefined;
+          const queryInput = {
+            query: (args as Record<string, unknown>).query as string,
+            limit: (args as Record<string, unknown>).limit as number | undefined,
+            mode: (args as Record<string, unknown>).mode as 'semantic' | 'keyword' | 'hybrid' | undefined,
+          };
+
+          if (kbArg) {
+            // Scoped to a specific KB
+            const result = await handleKbQuery(queryInput, resolveDeps(kbArg));
+            return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+          }
+
+          // Cross-KB search: query all KBs and merge results by score
+          const allDeps = getAllKBDeps();
+          if (allDeps.length <= 1) {
+            const result = await handleKbQuery(queryInput, allDeps[0] ?? deps);
+            return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+          }
+
+          const allResults = await Promise.all(
+            allDeps.map((d) => handleKbQuery(queryInput, d).catch(() => ({ results: [], mode: queryInput.mode ?? 'semantic' }))),
           );
-          return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+          const merged = allResults
+            .flatMap((r) => r.results)
+            .sort((a, b) => b.score - a.score)
+            .slice(0, queryInput.limit ?? 10);
+          return { content: [{ type: 'text', text: JSON.stringify({ results: merged, mode: queryInput.mode ?? 'semantic' }, null, 2) }] };
         }
         case 'kb_list': {
+          const kbArg = (args as Record<string, unknown>).kb as string | undefined;
           const result = await handleKbList(
             {
               limit: (args as Record<string, unknown>).limit as number | undefined,
               offset: (args as Record<string, unknown>).offset as number | undefined,
               tags: (args as Record<string, unknown>).tags as string[] | undefined,
             },
-            deps,
+            resolveDeps(kbArg),
           );
           return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
         }
         case 'kb_delete': {
+          const kbArg = (args as Record<string, unknown>).kb as string | undefined;
           const result = await handleKbDelete(
             {
               id: (args as Record<string, unknown>).id as string,
             },
-            deps,
+            resolveDeps(kbArg),
           );
           return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
         }

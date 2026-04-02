@@ -17,11 +17,21 @@ interface CacheEntry {
 const githubKeyCache = new Map<string, CacheEntry>();
 const CACHE_TTL_MS = 5 * 60 * 1000;
 
+/** GitHub username constraints: 1-39 alphanumeric or hyphen, no leading/trailing hyphen, no consecutive hyphens. */
+const GITHUB_USERNAME_RE = /^[a-zA-Z0-9](?:[a-zA-Z0-9]|-(?=[a-zA-Z0-9])){0,38}$/;
+
+export function isValidGitHubUsername(username: string): boolean {
+  return GITHUB_USERNAME_RE.test(username);
+}
+
 /**
  * Fetch SSH public keys from GitHub for a username.
  * Returns one key per line. Uses a 5-minute in-memory cache.
  */
 export async function fetchGitHubKeys(username: string): Promise<string[]> {
+  if (!isValidGitHubUsername(username)) {
+    throw new GitHubVerificationError('github_verification_failed', 'Could not verify key against GitHub account');
+  }
   const now = Date.now();
   const cached = githubKeyCache.get(username);
   if (cached && now < cached.expiresAt) {
@@ -34,11 +44,11 @@ export async function fetchGitHubKeys(username: string): Promise<string[]> {
   );
 
   if (response.status === 404) {
-    throw new GitHubVerificationError('github_user_not_found', `GitHub user "${username}" not found`);
+    throw new GitHubVerificationError('github_verification_failed', 'Could not verify key against GitHub account');
   }
 
   if (!response.ok) {
-    throw new GitHubVerificationError('github_unreachable', `GitHub returned status ${response.status}`);
+    throw new GitHubVerificationError('github_verification_failed', 'Could not verify key against GitHub account');
   }
 
   const text = await response.text();
@@ -52,6 +62,31 @@ export async function fetchGitHubKeys(username: string): Promise<string[]> {
 }
 
 /**
+ * Fetch SSH keys from GitHub, bypassing the in-memory cache.
+ * Used at auto-link time to ensure we have the latest key list.
+ */
+export async function fetchGitHubKeysFresh(username: string): Promise<string[]> {
+  githubKeyCache.delete(username);
+  return fetchGitHubKeys(username);
+}
+
+/**
+ * Check whether a public key (base64 blob) appears in a list of GitHub SSH key lines.
+ */
+export function keyAppearsInGitHubKeys(publicKeyBase64: string, githubKeys: string[]): boolean {
+  for (const ghKey of githubKeys) {
+    const parts = ghKey.split(/\s+/);
+    if (parts.length >= 2 && parts[1] === publicKeyBase64) {
+      return true;
+    }
+    if (ghKey === publicKeyBase64) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
  * Verify that a public key (in SSH authorized_keys format or base64) appears
  * on a GitHub account.
  */
@@ -60,19 +95,7 @@ export async function verifyKeyOnGitHub(
   githubUsername: string,
 ): Promise<boolean> {
   const githubKeys = await fetchGitHubKeys(githubUsername);
-
-  for (const ghKey of githubKeys) {
-    const parts = ghKey.split(/\s+/);
-    if (parts.length >= 2 && parts[1] === publicKeyBase64) {
-      return true;
-    }
-    // Also match if the full key blob matches
-    if (ghKey === publicKeyBase64) {
-      return true;
-    }
-  }
-
-  return false;
+  return keyAppearsInGitHubKeys(publicKeyBase64, githubKeys);
 }
 
 export class GitHubVerificationError extends Error {
@@ -135,25 +158,41 @@ export async function findTenantByGitHub(
 }
 
 /**
- * Store a reverse lookup record: GITHUB#{username} -> tenantId
+ * Store a reverse lookup record: GITHUB#{username} -> tenantId.
+ * Uses a conditional write to prevent a different tenant from claiming
+ * a username that is already associated with another tenant.
+ * Returns true if stored, false if already claimed by a different tenant.
  */
 export async function storeGitHubReverseLookup(
   githubUsername: string,
   tenantId: string,
   ddb: DynamoDBDocumentClient,
   tableName: string,
-): Promise<void> {
-  await ddb.send(
-    new PutCommand({
-      TableName: tableName,
-      Item: {
-        PK: `GITHUB#${githubUsername}`,
-        SK: 'META',
-        tenantId,
-        createdAt: new Date().toISOString(),
-      },
-    }),
-  );
+): Promise<boolean> {
+  try {
+    await ddb.send(
+      new PutCommand({
+        TableName: tableName,
+        Item: {
+          PK: `GITHUB#${githubUsername}`,
+          SK: 'META',
+          tenantId,
+          createdAt: new Date().toISOString(),
+        },
+        ConditionExpression: 'attribute_not_exists(PK) OR tenantId = :tid',
+        ExpressionAttributeValues: {
+          ':tid': tenantId,
+        },
+      }),
+    );
+    return true;
+  } catch (err: unknown) {
+    if ((err as { name?: string }).name === 'ConditionalCheckFailedException') {
+      logger.warn('GitHub username already claimed by another tenant', { githubUsername });
+      return false;
+    }
+    throw err;
+  }
 }
 
 // Export for testing

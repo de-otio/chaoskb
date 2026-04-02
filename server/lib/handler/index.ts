@@ -133,7 +133,7 @@ export const handler = async (event: LambdaFunctionURLEvent): Promise<LambdaFunc
       return response(result.statusCode, result.body, result.headers);
     }
 
-    // Register — no auth, IP rate limited (1 req/sec)
+    // Register — no auth, IP rate limited (1 req/sec; stricter for GitHub registrations)
     if (method === 'POST' && path === '/v1/auth/register') {
       const sourceIp = event.headers['x-forwarded-for']?.split(',')[0]?.trim()
         ?? event.requestContext.http.sourceIp
@@ -145,7 +145,22 @@ export const handler = async (event: LambdaFunctionURLEvent): Promise<LambdaFunc
           ...rateLimitHeaders(rateCheck),
         });
       }
-      const result = await handleRegister(event.body, ddb, TABLE_NAME, SIGNUPS_ENABLED_PARAM);
+      // Stricter rate limit for registrations that include a GitHub username
+      try {
+        const parsed = event.body ? JSON.parse(event.body) : {};
+        if (parsed.github) {
+          const ghRateCheck = await checkIpRateLimit(sourceIp, 'REGISTER_GITHUB', ddb, TABLE_NAME);
+          if (!ghRateCheck.allowed) {
+            return response(429, JSON.stringify({ error: 'rate_limited', message: 'Too many requests' }), {
+              'Content-Type': 'application/json',
+              ...rateLimitHeaders(ghRateCheck),
+            });
+          }
+        }
+      } catch {
+        // Invalid JSON — handleRegister will return 400
+      }
+      const result = await handleRegister(event.body, ddb, TABLE_NAME, SIGNUPS_ENABLED_PARAM, event.headers);
       return response(result.statusCode, result.body, result.headers);
     }
 

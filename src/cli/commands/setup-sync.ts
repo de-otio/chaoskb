@@ -3,6 +3,9 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { loadConfig, saveConfig } from './setup.js';
+import { SSHSigner } from '../../sync/ssh-signer.js';
+import { collectDeviceMetadata } from '../device-metadata.js';
+import { detectGitHubUsername, matchGitHubKeys } from '../github.js';
 
 function prompt(rl: readline.Interface, question: string): Promise<string> {
   return new Promise((resolve) => {
@@ -12,7 +15,12 @@ function prompt(rl: readline.Interface, question: string): Promise<string> {
   });
 }
 
-export async function setupSyncCommand(): Promise<void> {
+export interface SetupSyncOptions {
+  github?: string;
+  githubAuto?: boolean;
+}
+
+export async function setupSyncCommand(options: SetupSyncOptions = {}): Promise<void> {
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
@@ -70,48 +78,149 @@ export async function setupSyncCommand(): Promise<void> {
       process.exit(1);
     }
 
-    // 4. Register SSH public key
-    console.log('');
-    console.log('  Registering SSH public key...');
-
+    // 4. Find SSH key
     const sshPubKeyPath = findSSHPublicKey();
     if (!sshPubKeyPath) {
       console.error('  No SSH public key found. Ensure you have ~/.ssh/id_ed25519.pub or ~/.ssh/id_rsa.pub');
       process.exit(1);
     }
+    const sshKeyPath = sshPubKeyPath.replace('.pub', '');
+    const signer = new SSHSigner(sshKeyPath);
 
-    const pubKey = fs.readFileSync(sshPubKeyPath, 'utf-8').trim();
+    // 5. GitHub integration (optional)
+    let githubUsername: string | undefined = options.github;
+
+    if (options.githubAuto && !githubUsername) {
+      console.log('');
+      console.log('  Detecting GitHub account...');
+      const detection = await detectGitHubUsername();
+      if (detection.username) {
+        // Verify the SSH key matches
+        const matches = await matchGitHubKeys(detection.username);
+        if (matches.length > 0) {
+          const matchedKeyPath = matches[0].localKeyPath;
+          console.log(`  Found GitHub account: ${detection.username}`);
+          console.log(`  Matching SSH key: ${matchedKeyPath}`);
+          githubUsername = detection.username;
+        } else {
+          console.log(`  GitHub account found (${detection.username}) but no SSH keys match.`);
+          console.log('  Proceeding without GitHub linking.');
+        }
+      } else {
+        console.log('  No GitHub account detected. Proceeding without GitHub linking.');
+      }
+    }
+
+    if (githubUsername) {
+      console.log(`  GitHub linking: ${githubUsername}`);
+    }
+
+    // 6. Get challenge from server
+    console.log('');
+    console.log('  Registering SSH public key...');
+
+    let challengeNonce: string;
+    try {
+      const challengeUrl = new URL('/v1/register/challenge', endpoint).href;
+      const challengeResp = await fetch(challengeUrl, {
+        method: 'GET',
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!challengeResp.ok) {
+        throw new Error(`Challenge request failed: ${challengeResp.status}`);
+      }
+      const challengeBody = await challengeResp.json() as { challenge: string };
+      challengeNonce = challengeBody.challenge;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`  Failed to get registration challenge: ${message}`);
+      process.exit(1);
+    }
+
+    // 7. Sign challenge and register
+    const { signature, publicKey } = await signer.signRegistrationChallenge(challengeNonce);
+    const deviceInfo = await collectDeviceMetadata();
+
+    const registerBody: Record<string, unknown> = {
+      publicKey,
+      signedChallenge: signature,
+      challengeNonce,
+      deviceInfo,
+    };
+    if (githubUsername) {
+      registerBody.github = githubUsername;
+    }
 
     try {
       const registerUrl = new URL('/v1/auth/register', endpoint).href;
       const response = await fetch(registerUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ publicKey: pubKey }),
+        body: JSON.stringify(registerBody),
         signal: AbortSignal.timeout(10000),
       });
 
-      if (!response.ok) {
-        const body = await response.text();
-        console.error(`  Registration failed (${response.status}): ${body}`);
+      const responseBody = await response.json() as Record<string, unknown>;
+
+      if (response.status === 200 && responseBody.status === 'auto_linked') {
+        console.log(`  Auto-linked via GitHub (${githubUsername}).`);
+        console.log('  Waiting for existing device to share encryption key...');
+
+        // Poll for wrapped master key from the existing device
+        const wrappedKey = await pollForWrappedKey(endpoint, signer);
+        if (wrappedKey) {
+          console.log('  Encryption key received.');
+          // The wrapped key handling (unwrap + store in keyring) will be done
+          // by the sync service on first sync. Save the blob for now.
+          const wrappedKeyPath = path.join(os.homedir(), '.chaoskb', 'wrapped-key.bin');
+          fs.mkdirSync(path.dirname(wrappedKeyPath), { recursive: true });
+          fs.writeFileSync(wrappedKeyPath, Buffer.from(wrappedKey));
+        } else {
+          console.log('  Timed out waiting for encryption key.');
+          console.log('  The key will sync automatically when your other device comes online.');
+        }
+      } else if (response.status === 201) {
+        console.log('  SSH public key registered.');
+      } else if (response.status === 400 && responseBody.error === 'github_verification_failed') {
+        console.log('  GitHub verification failed. Registering without GitHub linking...');
+        // Retry without GitHub
+        delete registerBody.github;
+        const retryResp = await fetch(new URL('/v1/auth/register', endpoint).href, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(registerBody),
+          signal: AbortSignal.timeout(10000),
+        });
+        if (!retryResp.ok) {
+          const retryBody = await retryResp.text();
+          console.error(`  Registration failed (${retryResp.status}): ${retryBody}`);
+          process.exit(1);
+        }
+        githubUsername = undefined;
+        console.log('  SSH public key registered (without GitHub linking).');
+      } else if (!response.ok) {
+        console.error(`  Registration failed (${response.status}): ${JSON.stringify(responseBody)}`);
         process.exit(1);
       }
-      console.log('  SSH public key registered.');
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.error(`  Registration failed: ${message}`);
       process.exit(1);
     }
 
-    // 5. Write config
+    // 8. Write config
     config.endpoint = endpoint;
-    config.sshKeyPath = sshPubKeyPath.replace('.pub', '');
+    config.sshKeyPath = sshKeyPath;
+    if (githubUsername) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (config as any).github = githubUsername;
+    }
     await saveConfig(config);
 
     console.log('');
     console.log(`  Config saved to ~/.chaoskb/config.json`);
 
-    // 6. Canary blob verification
+    // 9. Canary blob verification
     console.log('');
     console.log('  Running canary blob verification...');
     try {
@@ -164,10 +273,58 @@ export async function setupSyncCommand(): Promise<void> {
     console.log('');
     console.log('  Sync setup complete!');
     console.log(`  Endpoint: ${endpoint}`);
+    if (githubUsername) {
+      console.log(`  GitHub: ${githubUsername}`);
+    }
     console.log('');
   } finally {
     rl.close();
   }
+}
+
+/**
+ * Poll the server for a wrapped master key after auto-linking.
+ * The existing device wraps the master key for the new device's SSH key
+ * and uploads it. We poll until it appears or timeout (5 minutes).
+ */
+async function pollForWrappedKey(
+  endpoint: string,
+  signer: SSHSigner,
+): Promise<Uint8Array | null> {
+  const deadline = Date.now() + 5 * 60 * 1000;
+  let sequence = 1;
+
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 5000));
+
+    try {
+      const urlPath = '/v1/wrapped-key';
+      const result = await signer.signRequest('GET', urlPath, sequence++);
+
+      const resp = await fetch(`${endpoint}${urlPath}`, {
+        method: 'GET',
+        headers: {
+          Authorization: result.authorization,
+          'X-ChaosKB-Timestamp': result.timestamp,
+          'X-ChaosKB-Sequence': String(result.sequence),
+          'X-ChaosKB-PublicKey': result.publicKey,
+        },
+        signal: AbortSignal.timeout(10_000),
+      });
+
+      if (resp.status === 200) {
+        const data = await resp.arrayBuffer();
+        return new Uint8Array(data);
+      }
+      // 404 = not yet available, keep polling
+    } catch {
+      // Network error, keep polling
+    }
+
+    process.stderr.write('.');
+  }
+
+  return null;
 }
 
 function findSSHPublicKey(): string | null {

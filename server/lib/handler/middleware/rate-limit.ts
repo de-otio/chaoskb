@@ -62,6 +62,12 @@ export async function checkRateLimit(
 // Per-IP window sizes: LINK_CONFIRM uses 5-second windows, others use 1-second
 const IP_WINDOW_SECONDS: Record<string, number> = {
   LINK_CONFIRM: 5,
+  REGISTER_GITHUB: 60,
+};
+
+// Per-IP limits: override the default of 1 per window
+const IP_LIMITS: Record<string, number> = {
+  REGISTER_GITHUB: 5,
 };
 
 /**
@@ -73,8 +79,9 @@ export async function checkIpRateLimit(
   operation: string,
   ddb: DynamoDBDocumentClient,
   tableName: string,
-  limit = 1,
+  limit?: number,
 ): Promise<RateLimitResult> {
+  const effectiveLimit = limit ?? IP_LIMITS[operation] ?? 1;
   const now = Math.floor(Date.now() / 1000);
   const windowSec = IP_WINDOW_SECONDS[operation] ?? 1;
   const windowKey = Math.floor(now / windowSec);
@@ -102,12 +109,12 @@ export async function checkIpRateLimit(
   );
 
   const currentCount = (result.Attributes?.['count'] as number) ?? 1;
-  if (currentCount > limit) {
+  if (currentCount > effectiveLimit) {
     const windowEnd = (windowKey + 1) * windowSec;
     const retryAfter = Math.max(1, windowEnd - now);
     return { allowed: false, remaining: 0, retryAfter };
   }
-  return { allowed: true, remaining: Math.max(0, limit - currentCount) };
+  return { allowed: true, remaining: Math.max(0, effectiveLimit - currentCount) };
 }
 
 export function rateLimitHeaders(result: RateLimitResult): Record<string, string> {

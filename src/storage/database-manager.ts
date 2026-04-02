@@ -51,6 +51,28 @@ export class DatabaseManager implements IDatabaseManager {
     return db;
   }
 
+  getNamedKBDb(kbName: string): IDatabase {
+    if (!PROJECT_NAME_RE.test(kbName)) {
+      throw new Error(
+        `Invalid KB name "${kbName}": only alphanumeric characters, hyphens, and underscores are allowed`,
+      );
+    }
+
+    const key = `kb:${kbName}`;
+    let db = this.databases.get(key);
+    if (db) return db;
+
+    const kbDir = path.join(this.baseDir, kbName, 'db');
+    if (!fs.existsSync(kbDir)) {
+      fs.mkdirSync(kbDir, { recursive: true, mode: 0o700 });
+    }
+
+    const dbPath = path.join(kbDir, 'local.db');
+    db = new KBDatabase({ path: dbPath });
+    this.databases.set(key, db);
+    return db;
+  }
+
   listProjects(): { name: string; path: string; sizeBytes: number; sourceCount: number }[] {
     const projectsDir = path.join(this.baseDir, 'projects');
     if (!fs.existsSync(projectsDir)) {

@@ -21,6 +21,8 @@ import { uninstallCommand } from './commands/uninstall.js';
 import { upgradeTierCommand } from './commands/config.js';
 import { rotateKeyCommand } from './commands/rotate-key.js';
 import { devicesAddCommand, devicesListCommand, devicesRemoveCommand } from './commands/devices.js';
+import { notificationsListCommand, notificationsDismissCommand } from './commands/notifications.js';
+import { kbCreateCommand, kbListCommand, kbDeleteCommand } from './commands/kb.js';
 
 const require = createRequire(import.meta.url);
 const pkg = require('../../package.json') as { version: string };
@@ -64,8 +66,10 @@ async function main(): Promise<void> {
   program
     .command('setup-sync')
     .description('Configure sync with server')
-    .action(async () => {
-      await setupSyncCommand();
+    .option('--github <username>', 'link to a GitHub account for automatic device linking')
+    .option('--github-auto', 'auto-detect GitHub account and match SSH keys')
+    .action(async (opts: { github?: string; githubAuto?: boolean }) => {
+      await setupSyncCommand({ github: opts.github, githubAuto: opts.githubAuto });
     });
 
   program
@@ -253,6 +257,51 @@ async function main(): Promise<void> {
     .description('Remove a device by fingerprint')
     .action(async (fingerprint: string) => {
       await devicesRemoveCommand(fingerprint);
+    });
+
+  const notifications = program
+    .command('notifications')
+    .description('View and dismiss sync notifications');
+
+  notifications
+    .command('list')
+    .description('Show unacknowledged notifications')
+    .action(async () => {
+      await notificationsListCommand();
+    });
+
+  notifications
+    .command('dismiss [id]')
+    .description('Dismiss a notification (or all if no ID given)')
+    .action(async (id?: string) => {
+      await notificationsDismissCommand(id);
+    });
+
+  const kb = program
+    .command('kb')
+    .description('Manage named knowledge bases');
+
+  kb
+    .command('create <name>')
+    .description('Create a named KB with its own SSH key and sync identity')
+    .option('--key <path>', 'path to the SSH private key for this KB')
+    .option('--github <username>', 'link to a GitHub account')
+    .action(async (name: string, opts: { key?: string; github?: string }) => {
+      await kbCreateCommand(name, opts);
+    });
+
+  kb
+    .command('list')
+    .description('List all named KBs')
+    .action(async () => {
+      await kbListCommand();
+    });
+
+  kb
+    .command('delete <name>')
+    .description('Delete a named KB and its local data')
+    .action(async (name: string) => {
+      await kbDeleteCommand(name);
     });
 
   await program.parseAsync(process.argv);

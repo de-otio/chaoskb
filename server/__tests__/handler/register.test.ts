@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as crypto from 'crypto';
 
 const { mockSend, mockSsmSend } = vi.hoisted(() => ({
@@ -25,6 +25,7 @@ vi.mock('@aws-sdk/client-ssm', () => ({
 }));
 
 import { handleRegister, handleChallenge, _resetSignupsCache } from '../../lib/handler/routes/register.js';
+import { _resetGitHubKeyCache } from '../../lib/handler/routes/github.js';
 
 const TABLE_NAME = 'chaoskb-test';
 const PARAM_NAME = '/chaoskb/test/signups-enabled';
@@ -42,6 +43,35 @@ function signChallenge(nonce: string): string {
 }
 
 const VALID_NONCE = crypto.randomBytes(32).toString('base64');
+
+/** Helper: mock a successful atomic challenge consumption (DeleteCommand with ALL_OLD). */
+function mockChallengeConsumed(nonce: string) {
+  mockSend.mockResolvedValueOnce({
+    Attributes: {
+      PK: `CHALLENGE#${nonce}`,
+      SK: 'META',
+      expiresAt: new Date(Date.now() + 60000).toISOString(),
+    },
+  });
+}
+
+/** Helper: mock a challenge that was already consumed (ConditionalCheckFailedException). */
+function mockChallengeAlreadyConsumed() {
+  const err = new Error('Condition not met');
+  err.name = 'ConditionalCheckFailedException';
+  mockSend.mockRejectedValueOnce(err);
+}
+
+/** Helper: mock an expired challenge consumption. */
+function mockChallengeExpired(nonce: string) {
+  mockSend.mockResolvedValueOnce({
+    Attributes: {
+      PK: `CHALLENGE#${nonce}`,
+      SK: 'META',
+      expiresAt: new Date(Date.now() - 1000).toISOString(),
+    },
+  });
+}
 
 describe('GET /v1/register/challenge', () => {
   beforeEach(() => {
@@ -76,16 +106,8 @@ describe('POST /v1/auth/register (challenge-response)', () => {
 
     // SSM returns signups enabled
     mockSsmSend.mockResolvedValueOnce({ Parameter: { Value: 'true' } });
-    // GetCommand: challenge lookup succeeds
-    mockSend.mockResolvedValueOnce({
-      Item: {
-        PK: `CHALLENGE#${nonce}`,
-        SK: 'META',
-        expiresAt: new Date(Date.now() + 60000).toISOString(),
-      },
-    });
-    // DeleteCommand: consume challenge
-    mockSend.mockResolvedValueOnce({});
+    // DeleteCommand: atomic challenge consumption (returns old item)
+    mockChallengeConsumed(nonce);
     // PutCommand: create tenant
     mockSend.mockResolvedValueOnce({});
     // PutCommand: audit event (called by logAuditEvent)
@@ -120,16 +142,8 @@ describe('POST /v1/auth/register (challenge-response)', () => {
     const invalidSignature = crypto.randomBytes(64).toString('base64');
 
     mockSsmSend.mockResolvedValueOnce({ Parameter: { Value: 'true' } });
-    // Challenge lookup succeeds
-    mockSend.mockResolvedValueOnce({
-      Item: {
-        PK: `CHALLENGE#${nonce}`,
-        SK: 'META',
-        expiresAt: new Date(Date.now() + 60000).toISOString(),
-      },
-    });
-    // DeleteCommand: consume challenge
-    mockSend.mockResolvedValueOnce({});
+    // DeleteCommand: atomic challenge consumption
+    mockChallengeConsumed(nonce);
 
     const body = JSON.stringify({
       publicKey: VALID_PUBLIC_KEY,
@@ -147,16 +161,8 @@ describe('POST /v1/auth/register (challenge-response)', () => {
     const signature = signChallenge(nonce);
 
     mockSsmSend.mockResolvedValueOnce({ Parameter: { Value: 'true' } });
-    // Challenge lookup: expired
-    mockSend.mockResolvedValueOnce({
-      Item: {
-        PK: `CHALLENGE#${nonce}`,
-        SK: 'META',
-        expiresAt: new Date(Date.now() - 1000).toISOString(), // already expired
-      },
-    });
-    // DeleteCommand: cleanup expired challenge
-    mockSend.mockResolvedValueOnce({});
+    // DeleteCommand: atomic consumption returns expired item
+    mockChallengeExpired(nonce);
 
     const body = JSON.stringify({
       publicKey: VALID_PUBLIC_KEY,
@@ -174,8 +180,8 @@ describe('POST /v1/auth/register (challenge-response)', () => {
     const signature = signChallenge(nonce);
 
     mockSsmSend.mockResolvedValueOnce({ Parameter: { Value: 'true' } });
-    // Challenge lookup: not found (already consumed)
-    mockSend.mockResolvedValueOnce({ Item: undefined });
+    // DeleteCommand: ConditionalCheckFailedException (already consumed)
+    mockChallengeAlreadyConsumed();
 
     const body = JSON.stringify({
       publicKey: VALID_PUBLIC_KEY,
@@ -207,17 +213,9 @@ describe('POST /v1/auth/register (challenge-response)', () => {
     const signature = signChallenge(nonce);
 
     mockSsmSend.mockResolvedValueOnce({ Parameter: { Value: 'true' } });
-    // Challenge valid
-    mockSend.mockResolvedValueOnce({
-      Item: {
-        PK: `CHALLENGE#${nonce}`,
-        SK: 'META',
-        expiresAt: new Date(Date.now() + 60000).toISOString(),
-      },
-    });
-    // DeleteCommand: consume challenge
-    mockSend.mockResolvedValueOnce({});
-    // PutCommand: conditional check fails
+    // DeleteCommand: atomic challenge consumption
+    mockChallengeConsumed(nonce);
+    // PutCommand: conditional check fails (tenant already exists)
     const condError = new Error('Condition not met');
     condError.name = 'ConditionalCheckFailedException';
     mockSend.mockRejectedValueOnce(condError);
@@ -233,3 +231,303 @@ describe('POST /v1/auth/register (challenge-response)', () => {
     expect(JSON.parse(result.body).error).toBe('already_registered');
   });
 });
+
+describe('POST /v1/auth/register (GitHub integration)', () => {
+  beforeEach(() => {
+    mockSend.mockReset();
+    mockSsmSend.mockReset();
+    _resetSignupsCache();
+    _resetGitHubKeyCache();
+  });
+
+  const originalFetch = globalThis.fetch;
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  function setupValidRegistration(nonce: string) {
+    mockSsmSend.mockResolvedValueOnce({ Parameter: { Value: 'true' } });
+    mockChallengeConsumed(nonce);
+  }
+
+  it('should return uniform github_verification_failed when GitHub user not found', async () => {
+    const nonce = VALID_NONCE;
+    const signature = signChallenge(nonce);
+    setupValidRegistration(nonce);
+
+    // GitHub returns 404
+    globalThis.fetch = vi.fn().mockResolvedValueOnce({ ok: false, status: 404 });
+
+    const body = JSON.stringify({
+      publicKey: VALID_PUBLIC_KEY,
+      signedChallenge: signature,
+      challengeNonce: nonce,
+      github: 'nonexistent',
+    });
+    const result = await handleRegister(body, ddb, TABLE_NAME, PARAM_NAME);
+
+    expect(result.statusCode).toBe(400);
+    expect(JSON.parse(result.body).error).toBe('github_verification_failed');
+  });
+
+  it('should return uniform github_verification_failed when key not on GitHub', async () => {
+    const nonce = VALID_NONCE;
+    const signature = signChallenge(nonce);
+    setupValidRegistration(nonce);
+
+    // GitHub returns keys but none match
+    globalThis.fetch = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      text: async () => 'ssh-ed25519 AAAAC3otherkey user@host\n',
+    });
+
+    const body = JSON.stringify({
+      publicKey: VALID_PUBLIC_KEY,
+      signedChallenge: signature,
+      challengeNonce: nonce,
+      github: 'someuser',
+    });
+    const result = await handleRegister(body, ddb, TABLE_NAME, PARAM_NAME);
+
+    expect(result.statusCode).toBe(400);
+    expect(JSON.parse(result.body).error).toBe('github_verification_failed');
+  });
+
+  it('should return uniform github_verification_failed when GitHub unreachable', async () => {
+    const nonce = VALID_NONCE;
+    const signature = signChallenge(nonce);
+    setupValidRegistration(nonce);
+
+    // GitHub returns 503
+    globalThis.fetch = vi.fn().mockResolvedValueOnce({ ok: false, status: 503 });
+
+    const body = JSON.stringify({
+      publicKey: VALID_PUBLIC_KEY,
+      signedChallenge: signature,
+      challengeNonce: nonce,
+      github: 'someuser',
+    });
+    const result = await handleRegister(body, ddb, TABLE_NAME, PARAM_NAME);
+
+    expect(result.statusCode).toBe(400);
+    expect(JSON.parse(result.body).error).toBe('github_verification_failed');
+  });
+
+  it('all GitHub failure modes return identical response structure', async () => {
+    const responses: string[] = [];
+
+    for (const fetchResponse of [
+      { ok: false, status: 404 }, // user not found
+      { ok: false, status: 503 }, // unreachable
+    ]) {
+      const nonce = crypto.randomBytes(32).toString('base64');
+      const signature = signChallenge(nonce);
+      mockSend.mockReset();
+      mockSsmSend.mockReset();
+      _resetSignupsCache();
+      setupValidRegistration(nonce);
+
+      globalThis.fetch = vi.fn().mockResolvedValueOnce(fetchResponse);
+
+      const body = JSON.stringify({
+        publicKey: VALID_PUBLIC_KEY,
+        signedChallenge: signature,
+        challengeNonce: nonce,
+        github: 'testuser',
+      });
+      const result = await handleRegister(body, ddb, TABLE_NAME, PARAM_NAME);
+      responses.push(result.body);
+    }
+
+    // All responses should have identical structure
+    const parsed = responses.map((r) => JSON.parse(r));
+    expect(parsed[0].error).toBe(parsed[1].error);
+    expect(parsed[0].error).toBe('github_verification_failed');
+  });
+
+  it('auto_linked response should not include tenantId', async () => {
+    const nonce = VALID_NONCE;
+    const signature = signChallenge(nonce);
+    setupValidRegistration(nonce);
+
+    const githubKeysResponse = {
+      ok: true,
+      status: 200,
+      text: async () => `ssh-ed25519 ${VALID_PUBLIC_KEY} user@host\n`,
+    };
+
+    // GitHub returns matching key (initial verify + fresh-fetch)
+    globalThis.fetch = vi.fn()
+      .mockResolvedValueOnce(githubKeysResponse)  // verifyKeyOnGitHub
+      .mockResolvedValueOnce(githubKeysResponse);  // fetchGitHubKeysFresh
+
+    // findTenantByGitHub: existing tenant found
+    mockSend.mockResolvedValueOnce({
+      Item: { PK: 'GITHUB#testuser', SK: 'META', tenantId: 'existing-tenant' },
+    });
+    // createNotification: PutCommand
+    mockSend.mockResolvedValueOnce({});
+    // logAuditEvent: PutCommand
+    mockSend.mockResolvedValueOnce({});
+
+    const body = JSON.stringify({
+      publicKey: VALID_PUBLIC_KEY,
+      signedChallenge: signature,
+      challengeNonce: nonce,
+      github: 'testuser',
+    });
+    const result = await handleRegister(body, ddb, TABLE_NAME, PARAM_NAME);
+
+    expect(result.statusCode).toBe(200);
+    const parsed = JSON.parse(result.body);
+    expect(parsed.status).toBe('auto_linked');
+    expect(parsed.github).toBe('testuser');
+    expect(parsed.tenantId).toBeUndefined(); // M1: no tenantId leak
+  });
+
+  it('should register with GitHub when no existing tenant (new registration)', async () => {
+    const nonce = crypto.randomBytes(32).toString('base64');
+    const signature = signChallenge(nonce);
+    mockSend.mockReset();
+    mockSsmSend.mockReset();
+    _resetSignupsCache();
+
+    setupValidRegistration(nonce);
+
+    const githubKeysResponse = {
+      ok: true,
+      status: 200,
+      text: async () => `ssh-ed25519 ${VALID_PUBLIC_KEY} user@host\n`,
+    };
+    globalThis.fetch = vi.fn()
+      .mockResolvedValueOnce(githubKeysResponse); // verifyKeyOnGitHub
+
+    // findTenantByGitHub: no existing tenant
+    mockSend.mockResolvedValueOnce({ Item: undefined });
+    // PutCommand: create tenant
+    mockSend.mockResolvedValueOnce({});
+    // storeGitHubReverseLookup: PutCommand (conditional)
+    mockSend.mockResolvedValueOnce({});
+    // storeGitHubAssociation: PutCommand
+    mockSend.mockResolvedValueOnce({});
+    // logAuditEvent: PutCommand
+    mockSend.mockResolvedValueOnce({});
+
+    const body = JSON.stringify({
+      publicKey: VALID_PUBLIC_KEY,
+      signedChallenge: signature,
+      challengeNonce: nonce,
+      github: 'newuser',
+    });
+    const result = await handleRegister(body, ddb, TABLE_NAME, PARAM_NAME);
+
+    expect(result.statusCode).toBe(201);
+    const parsed = JSON.parse(result.body);
+    expect(parsed.github).toBe('newuser');
+  });
+
+  it('should return github_verification_failed when username claimed by another tenant', async () => {
+    const nonce = crypto.randomBytes(32).toString('base64');
+    const signature = signChallenge(nonce);
+    mockSend.mockReset();
+    mockSsmSend.mockReset();
+    _resetSignupsCache();
+
+    setupValidRegistration(nonce);
+
+    globalThis.fetch = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      text: async () => `ssh-ed25519 ${VALID_PUBLIC_KEY} user@host\n`,
+    });
+
+    // findTenantByGitHub: no existing tenant
+    mockSend.mockResolvedValueOnce({ Item: undefined });
+    // PutCommand: create tenant
+    mockSend.mockResolvedValueOnce({});
+    // storeGitHubReverseLookup: ConditionalCheckFailedException (username claimed)
+    const condError = new Error('Condition not met');
+    condError.name = 'ConditionalCheckFailedException';
+    mockSend.mockRejectedValueOnce(condError);
+
+    const body = JSON.stringify({
+      publicKey: VALID_PUBLIC_KEY,
+      signedChallenge: signature,
+      challengeNonce: nonce,
+      github: 'claimed-user',
+    });
+    const result = await handleRegister(body, ddb, TABLE_NAME, PARAM_NAME);
+
+    expect(result.statusCode).toBe(400);
+    expect(JSON.parse(result.body).error).toBe('github_verification_failed');
+  });
+
+  it('should fall through to normal registration when GitHub unreachable during auto-link', async () => {
+    const nonce = crypto.randomBytes(32).toString('base64');
+    const signature = signChallenge(nonce);
+    mockSend.mockReset();
+    mockSsmSend.mockReset();
+    _resetSignupsCache();
+
+    setupValidRegistration(nonce);
+
+    // Initial verifyKeyOnGitHub succeeds
+    globalThis.fetch = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        text: async () => `ssh-ed25519 ${VALID_PUBLIC_KEY} user@host\n`,
+      })
+      // fetchGitHubKeysFresh fails (GitHub unreachable)
+      .mockRejectedValueOnce(new Error('network error'));
+
+    // findTenantByGitHub: existing tenant found
+    mockSend.mockResolvedValueOnce({
+      Item: { PK: 'GITHUB#testuser', SK: 'META', tenantId: 'existing-tenant' },
+    });
+    // Falls through to normal registration since fresh keys unavailable
+    // PutCommand: create tenant
+    mockSend.mockResolvedValueOnce({});
+    // logAuditEvent: PutCommand
+    mockSend.mockResolvedValueOnce({});
+
+    const body = JSON.stringify({
+      publicKey: VALID_PUBLIC_KEY,
+      signedChallenge: signature,
+      challengeNonce: nonce,
+      github: 'testuser',
+    });
+    const result = await handleRegister(body, ddb, TABLE_NAME, PARAM_NAME);
+
+    // Should fall through to 201 (normal registration), not 200 (auto-linked)
+    expect(result.statusCode).toBe(201);
+  });
+
+  it('should include deviceInfo in registration request', async () => {
+    const nonce = VALID_NONCE;
+    const signature = signChallenge(nonce);
+
+    mockSsmSend.mockResolvedValueOnce({ Parameter: { Value: 'true' } });
+    mockChallengeConsumed(nonce);
+    // PutCommand: create tenant
+    mockSend.mockResolvedValueOnce({});
+    // logAuditEvent
+    mockSend.mockResolvedValueOnce({});
+
+    const body = JSON.stringify({
+      publicKey: VALID_PUBLIC_KEY,
+      signedChallenge: signature,
+      challengeNonce: nonce,
+      deviceInfo: {
+        hostname: 'test-host',
+        platform: 'darwin',
+        arch: 'arm64',
+      },
+    });
+    const result = await handleRegister(body, ddb, TABLE_NAME, PARAM_NAME);
+
+    expect(result.statusCode).toBe(201);
+  });
+});
+

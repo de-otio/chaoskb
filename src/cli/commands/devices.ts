@@ -260,6 +260,20 @@ export async function devicesListCommand(): Promise<void> {
 export async function devicesRemoveCommand(fingerprint: string): Promise<void> {
   const { signedFetch } = await createSyncClient();
 
+  // Show device info before removing
+  const listResp = await signedFetch('GET', '/v1/devices');
+  if (listResp.ok) {
+    const data = await listResp.json() as { devices: Array<{ fingerprint: string; registeredAt: string }> };
+    const device = data.devices.find((d) => d.fingerprint === fingerprint);
+    if (device) {
+      const date = new Date(device.registeredAt).toLocaleString();
+      console.log('');
+      console.log(`  Removing device:`);
+      console.log(`    Fingerprint: ${device.fingerprint}`);
+      console.log(`    Registered:  ${date}`);
+    }
+  }
+
   const resp = await signedFetch('DELETE', `/v1/devices/${encodeURIComponent(fingerprint)}`);
   if (!resp.ok) {
     const err = await resp.text();
@@ -268,6 +282,6 @@ export async function devicesRemoveCommand(fingerprint: string): Promise<void> {
   }
 
   console.log('');
-  console.log(`  Device ${fingerprint} removed.`);
+  console.log(`  Device ${fingerprint} removed. It will stop syncing on its next attempt.`);
   console.log('');
 }

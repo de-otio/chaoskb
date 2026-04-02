@@ -127,6 +127,53 @@ export class SyncService implements ISyncService {
     return result.match;
   }
 
+  /**
+   * Check for unacknowledged notifications from the server.
+   * Returns formatted notification strings for display by the MCP layer.
+   */
+  async checkNotifications(): Promise<string[]> {
+    try {
+      const response = await this.httpClient.get('/v1/notifications');
+      if (!response.ok) return [];
+
+      const data = (await response.json()) as {
+        notifications: Array<{
+          id: string;
+          type: string;
+          deviceInfo?: {
+            hostname?: string;
+            platform?: string;
+            osVersion?: string;
+            arch?: string;
+            deviceModel?: string | null;
+            location?: string | null;
+          };
+          timestamp: string;
+        }>;
+      };
+
+      if (data.notifications.length === 0) return [];
+
+      return data.notifications.map((n) => {
+        const time = new Date(n.timestamp).toLocaleString();
+        const typeLabel = n.type === 'device_linked' ? 'New device linked'
+          : n.type === 'device_revoked' ? 'Device revoked'
+          : n.type === 'key_rotated' ? 'Key rotated'
+          : n.type;
+
+        const parts = [typeLabel];
+        if (n.deviceInfo?.hostname) parts.push(`host: ${n.deviceInfo.hostname}`);
+        if (n.deviceInfo?.deviceModel) parts.push(`device: ${n.deviceInfo.deviceModel}`);
+        if (n.deviceInfo?.location) parts.push(`location: ${n.deviceInfo.location}`);
+        parts.push(time);
+
+        return parts.join(' — ');
+      });
+    } catch {
+      return [];
+    }
+  }
+
   private loadState(): SyncState {
     try {
       if (existsSync(SYNC_STATE_PATH)) {

@@ -1,3 +1,4 @@
+import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
@@ -35,6 +36,15 @@ export async function kbCreateCommand(
   fs.mkdirSync(path.join(kbDir, 'db'), { recursive: true, mode: 0o700 });
   fs.mkdirSync(path.join(kbDir, 'keys'), { recursive: true, mode: 0o700 });
 
+  // F1.4: Generate an independent master key for encryption isolation
+  const masterKey = crypto.randomBytes(32);
+  fs.writeFileSync(
+    path.join(kbDir, 'keys', 'master.key'),
+    masterKey.toString('hex'),
+    { mode: 0o600 },
+  );
+  masterKey.fill(0); // Zero out from memory
+
   const config: KBConfig = {
     name,
     sshKeyPath: options.key,
@@ -50,12 +60,26 @@ export async function kbCreateCommand(
   );
 
   console.log(`KB "${name}" created at ${kbDir}`);
+  console.log('  Independent master key generated.');
 
   if (options.github) {
     console.log(`  GitHub: ${options.github}`);
   }
   if (options.key) {
     console.log(`  SSH key: ${options.key}`);
+  }
+
+  // F1.3: If an endpoint is configured, register this KB independently
+  const mainConfigPath = path.join(CHAOSKB_DIR, 'config.json');
+  if (fs.existsSync(mainConfigPath)) {
+    try {
+      const mainConfig = JSON.parse(fs.readFileSync(mainConfigPath, 'utf-8'));
+      if (mainConfig.endpoint && options.key) {
+        console.log(`  To sync this KB, run: chaoskb-mcp setup-sync --github ${options.github ?? '<username>'}`);
+      }
+    } catch {
+      // Ignore config parse errors
+    }
   }
 }
 
@@ -167,6 +191,27 @@ export function migrateToNamedKBLayout(): boolean {
   }
 
   return true;
+}
+
+/**
+ * F3.1: Detect which named KBs can be synced on this device.
+ *
+ * For each named KB that has an SSH key configured, check if the
+ * corresponding key exists on this device. Returns matching KB names.
+ */
+export function detectSyncableKBs(): { name: string; sshKeyPath: string; github?: string }[] {
+  const kbs = listKBs();
+  const syncable: { name: string; sshKeyPath: string; github?: string }[] = [];
+
+  for (const kb of kbs) {
+    if (!kb.sshKeyPath) continue;
+    // Check if the private key or public key exists on this device
+    if (fs.existsSync(kb.sshKeyPath) || fs.existsSync(kb.sshKeyPath + '.pub')) {
+      syncable.push({ name: kb.name, sshKeyPath: kb.sshKeyPath, github: kb.github });
+    }
+  }
+
+  return syncable;
 }
 
 function isValidKBName(name: string): boolean {

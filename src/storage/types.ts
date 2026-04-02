@@ -124,6 +124,8 @@ export interface IDatabaseManager {
   getPersonalDb(): IDatabase;
   /** Get or create a project database */
   getProjectDb(projectName: string): IDatabase;
+  /** Get or create a named KB database (from ~/.chaoskb/<name>/db/) */
+  getNamedKBDb(kbName: string): IDatabase;
   /** List all project databases */
   listProjects(): { name: string; path: string; sizeBytes: number; sourceCount: number }[];
   /** Delete a project database */

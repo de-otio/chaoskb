@@ -58,6 +58,25 @@ export class SSHSigner {
   }
 
   /**
+   * Sign a registration challenge nonce.
+   * The signed data is: "chaoskb-register\n" + nonce.
+   * Returns { signature, publicKey } as base64 strings.
+   */
+  async signRegistrationChallenge(nonce: string): Promise<{
+    signature: string;
+    publicKey: string;
+  }> {
+    const data = `chaoskb-register\n${nonce}`;
+    const sig = await this.signCanonical(data);
+
+    const publicKeyRaw = await this.readPublicKey();
+    const parts = publicKeyRaw.split(/\s+/);
+    const publicKey = parts.length >= 2 ? parts[1] : publicKeyRaw;
+
+    return { signature: sig.toString('base64'), publicKey };
+  }
+
+  /**
    * Build the canonical string to be signed.
    *
    * Format: chaoskb-auth\nMETHOD PATH\nTIMESTAMP\nSEQUENCE\nBODY_HASH

@@ -55,14 +55,61 @@ describe('GitHub key verification', () => {
       ]);
     });
 
-    it('should throw for 404 (user not found)', async () => {
+    it('should throw uniform error for 404 (user not found)', async () => {
       globalThis.fetch = vi.fn().mockResolvedValue({
         ok: false,
         status: 404,
       });
 
       await expect(fetchGitHubKeys('nonexistent')).rejects.toThrow(GitHubVerificationError);
-      await expect(fetchGitHubKeys('nonexistent2')).rejects.toThrow('not found');
+      await expect(fetchGitHubKeys('nonexistent2')).rejects.toThrow('Could not verify key against GitHub account');
+    });
+
+    it('should throw uniform error for non-200 responses', async () => {
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 500,
+      });
+
+      await expect(fetchGitHubKeys('someuser')).rejects.toThrow(GitHubVerificationError);
+      await expect(fetchGitHubKeys('someuser2')).rejects.toThrow('Could not verify key against GitHub account');
+    });
+
+    it('should return uniform error code for all failure types', async () => {
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 404,
+      });
+
+      try {
+        await fetchGitHubKeys('test404');
+      } catch (err) {
+        expect(err).toBeInstanceOf(GitHubVerificationError);
+        expect((err as GitHubVerificationError).code).toBe('github_verification_failed');
+      }
+
+      _resetGitHubKeyCache();
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 503,
+      });
+
+      try {
+        await fetchGitHubKeys('test503');
+      } catch (err) {
+        expect(err).toBeInstanceOf(GitHubVerificationError);
+        expect((err as GitHubVerificationError).code).toBe('github_verification_failed');
+      }
+    });
+
+    it('should reject invalid GitHub usernames before making a request', async () => {
+      const mockFetch = vi.fn();
+      globalThis.fetch = mockFetch;
+
+      await expect(fetchGitHubKeys('../etc/passwd')).rejects.toThrow(GitHubVerificationError);
+      await expect(fetchGitHubKeys('a'.repeat(40))).rejects.toThrow(GitHubVerificationError);
+      await expect(fetchGitHubKeys('-leadinghyphen')).rejects.toThrow(GitHubVerificationError);
+      expect(mockFetch).not.toHaveBeenCalled();
     });
 
     it('should cache results for 5 minutes', async () => {
@@ -133,12 +180,31 @@ describe('GitHub key verification', () => {
   });
 
   describe('storeGitHubReverseLookup', () => {
-    it('should store GITHUB#{username} -> tenantId', async () => {
+    it('should store GITHUB#{username} -> tenantId and return true', async () => {
       mockSend.mockResolvedValueOnce({});
 
-      await storeGitHubReverseLookup('ghuser', 'tenant-123', ddb, TABLE_NAME);
+      const result = await storeGitHubReverseLookup('ghuser', 'tenant-123', ddb, TABLE_NAME);
 
+      expect(result).toBe(true);
       expect(mockSend).toHaveBeenCalledTimes(1);
+    });
+
+    it('should return false when username is claimed by another tenant', async () => {
+      const condError = new Error('Condition not met');
+      condError.name = 'ConditionalCheckFailedException';
+      mockSend.mockRejectedValueOnce(condError);
+
+      const result = await storeGitHubReverseLookup('ghuser', 'tenant-456', ddb, TABLE_NAME);
+
+      expect(result).toBe(false);
+    });
+
+    it('should allow same tenant to re-claim the same username (idempotent)', async () => {
+      mockSend.mockResolvedValueOnce({}); // conditional write succeeds (tenantId matches)
+
+      const result = await storeGitHubReverseLookup('ghuser', 'tenant-123', ddb, TABLE_NAME);
+
+      expect(result).toBe(true);
     });
   });
 });

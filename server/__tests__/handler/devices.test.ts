@@ -174,6 +174,52 @@ describe('POST /v1/link-confirm', () => {
     const result = await handleLinkConfirm(body, ddb, TABLE_NAME);
     expect(result.statusCode).toBe(400);
   });
+
+  it('should return 400 for invalid JSON', async () => {
+    const result = await handleLinkConfirm('{{bad', ddb, TABLE_NAME);
+    expect(result.statusCode).toBe(400);
+  });
+
+  it('should return 404 when tenant-scoped link record not found', async () => {
+    // Reverse-lookup succeeds
+    mockSend.mockResolvedValueOnce({
+      Item: { PK: `LINK_CODE#${codeHash}`, SK: 'META', tenantId: TENANT_ID },
+    });
+    // Tenant-scoped record missing
+    mockSend.mockResolvedValueOnce({ Item: undefined });
+
+    const body = JSON.stringify({ linkCode, publicKey: newPublicKey });
+    const result = await handleLinkConfirm(body, ddb, TABLE_NAME);
+
+    expect(result.statusCode).toBe(404);
+  });
+
+  it('should return 404 when update conditional check fails (link code consumed)', async () => {
+    // Reverse-lookup
+    mockSend.mockResolvedValueOnce({
+      Item: { PK: `LINK_CODE#${codeHash}`, SK: 'META', tenantId: TENANT_ID },
+    });
+    // Tenant-scoped record
+    mockSend.mockResolvedValueOnce({
+      Item: {
+        PK: `TENANT#${TENANT_ID}`,
+        SK: `LINK#${codeHash}`,
+        newPublicKey: null,
+        failureCount: 0,
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      },
+    });
+    // UpdateCommand: ConditionalCheckFailedException
+    const condError = new Error('Condition not met');
+    condError.name = 'ConditionalCheckFailedException';
+    mockSend.mockRejectedValueOnce(condError);
+
+    const body = JSON.stringify({ linkCode, publicKey: newPublicKey });
+    const result = await handleLinkConfirm(body, ddb, TABLE_NAME);
+
+    expect(result.statusCode).toBe(404);
+    expect(JSON.parse(result.body).error).toBe('not_found');
+  });
 });
 
 describe('GET /v1/link-code/{hash}/status', () => {
@@ -264,8 +310,9 @@ describe('DELETE /v1/devices/{fingerprint}', () => {
     mockSend.mockReset();
   });
 
-  it('should delete device, wrapped key, and create notification', async () => {
-    // Two DeleteCommands (KEY# and WRAPPED_KEY#) + one PutCommand (notification)
+  it('should delete device, wrapped key, create notification, and audit event', async () => {
+    // Two DeleteCommands (KEY# and WRAPPED_KEY#) + one PutCommand (notification) + one PutCommand (audit)
+    mockSend.mockResolvedValueOnce({});
     mockSend.mockResolvedValueOnce({});
     mockSend.mockResolvedValueOnce({});
     mockSend.mockResolvedValueOnce({});
@@ -274,6 +321,6 @@ describe('DELETE /v1/devices/{fingerprint}', () => {
 
     expect(result.statusCode).toBe(200);
     expect(JSON.parse(result.body).status).toBe('deleted');
-    expect(mockSend).toHaveBeenCalledTimes(3);
+    expect(mockSend).toHaveBeenCalledTimes(4);
   });
 });
