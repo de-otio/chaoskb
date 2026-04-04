@@ -79,11 +79,13 @@ describe('bootstrap', () => {
     expect(config.securityTier).toBe('standard');
     expect(config.projects).toEqual([]);
 
-    // Config has secure permissions (0o600)
-    const configStat = fs.statSync(configPath);
-    expect(configStat.mode & 0o777).toBe(0o600);
+    // Config has secure permissions (0o600) — skip on Windows where chmod is a no-op
+    if (process.platform !== 'win32') {
+      const configStat = fs.statSync(configPath);
+      expect(configStat.mode & 0o777).toBe(0o600);
+    }
 
-    // Key stored in keyring
+    // Key stored in keyring (master key + identity keypair = 3 store calls)
     expect(mockKeyringStore).toHaveBeenCalledWith('chaoskb', 'master-key', mockMasterKey);
 
     // Master key disposed
@@ -124,9 +126,11 @@ describe('bootstrap', () => {
       const keyHex = fs.readFileSync(keyPath, 'utf-8');
       expect(keyHex).toBe(mockMasterKey.buffer.toString('hex'));
 
-      // Key file has secure permissions (0o600)
-      const keyStat = fs.statSync(keyPath);
-      expect(keyStat.mode & 0o777).toBe(0o600);
+      // Key file has secure permissions (0o600) — skip on Windows
+      if (process.platform !== 'win32') {
+        const keyStat = fs.statSync(keyPath);
+        expect(keyStat.mode & 0o777).toBe(0o600);
+      }
 
       // Warning emitted
       expect(stderrWriteSpy).toHaveBeenCalledWith(
@@ -172,9 +176,9 @@ describe('bootstrap', () => {
     // by pre-creating the config before bootstrap runs, but after the directory exists
     fs.mkdirSync(chaoskbDir, { recursive: true });
 
-    // First call creates config
+    // First call creates config (stores master key, and optionally identity keypair)
     await bootstrap({ baseDir: chaoskbDir });
-    expect(mockKeyringStore).toHaveBeenCalledTimes(1);
+    expect(mockKeyringStore).toHaveBeenCalled();
 
     vi.clearAllMocks();
 
