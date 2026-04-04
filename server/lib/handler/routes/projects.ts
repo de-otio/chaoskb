@@ -1,6 +1,5 @@
 import {
   DynamoDBDocumentClient,
-  QueryCommand,
 } from '@aws-sdk/lib-dynamodb';
 import { checkRateLimit, rateLimitHeaders } from '../middleware/rate-limit.js';
 import { logger } from '../logger.js';

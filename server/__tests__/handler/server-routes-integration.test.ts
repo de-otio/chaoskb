@@ -61,7 +61,7 @@ describe('Wrapped key lifecycle', () => {
 
 // --- Replay Protection ---
 
-import { checkSequence, AuthError } from '../../lib/handler/middleware/ssh-auth.js';
+import { checkSequence } from '../../lib/handler/middleware/ssh-auth.js';
 
 describe('Replay protection lifecycle', () => {
   beforeEach(() => mockSend.mockReset());
@@ -124,7 +124,7 @@ describe('Rate limiting lifecycle', () => {
 
 // --- Invite Lifecycle ---
 
-import { handleCreateInvite, handleListInvites, handleAcceptInvite, handleDeclineInvite } from '../../lib/handler/routes/invites.js';
+import { handleCreateInvite, handleAcceptInvite, handleDeclineInvite } from '../../lib/handler/routes/invites.js';
 
 describe('Invite lifecycle', () => {
   beforeEach(() => mockSend.mockReset());
@@ -280,7 +280,7 @@ describe('Audit log lifecycle', () => {
 
 // --- Rotation Lifecycle ---
 
-import { handleRotateStart, handleRotateConfirm } from '../../lib/handler/routes/rotation.js';
+import { handleRotateStart } from '../../lib/handler/routes/rotation.js';
 
 describe('Rotation lifecycle', () => {
   beforeEach(() => mockSend.mockReset());

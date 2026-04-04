@@ -41,19 +41,10 @@ vi.mock('../../../sync/sequence.js', () => ({
 const mockFetch = vi.fn();
 vi.stubGlobal('fetch', mockFetch);
 
-import { rotateKeyCommand } from '../rotate-key.js';
-
 const MOCK_FINGERPRINT_OLD = 'old-fingerprint-abc';
-const MOCK_FINGERPRINT_NEW = 'new-fingerprint-xyz';
-const MOCK_ENDPOINT = 'https://sync.chaoskb.com';
 
 function makeTmpDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'chaoskb-rotate-test-'));
-}
-
-function writeConfig(dir: string, config: Record<string, unknown>): void {
-  fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify(config));
 }
 
 function writeSSHKey(dir: string, keyName: string): string {

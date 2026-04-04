@@ -27,10 +27,6 @@ function fingerprintFromPublicKey(publicKeyBase64: string): string {
   return crypto.createHash('sha256').update(Buffer.from(publicKeyBase64, 'base64')).digest('base64');
 }
 
-function tenantIdFromPublicKey(publicKeyBase64: string): string {
-  const hash = crypto.createHash('sha256').update(publicKeyBase64).digest('hex');
-  return hash.slice(0, 32);
-}
 
 function isValidBase64(value: string): boolean {
   if (!value || value.length < 4 || value.length > 8192) return false;

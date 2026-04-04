@@ -4,9 +4,6 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 
 import {
-  kbCreateCommand,
-  kbListCommand,
-  kbDeleteCommand,
   listKBs,
   migrateToNamedKBLayout,
 } from '../../commands/kb.js';
@@ -15,7 +12,6 @@ import {
 const TEST_DIR = path.join(os.tmpdir(), `chaoskb-test-${Date.now()}`);
 
 // Override the CHAOSKB_DIR by patching os.homedir
-const originalHomedir = os.homedir;
 
 describe('Named KB management', () => {
   beforeEach(() => {

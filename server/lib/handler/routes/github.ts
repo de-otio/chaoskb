@@ -2,13 +2,6 @@ import * as crypto from 'crypto';
 import { DynamoDBDocumentClient, PutCommand, GetCommand } from '@aws-sdk/lib-dynamodb';
 import { logger } from '../logger.js';
 
-interface HandlerResponse {
-  statusCode: number;
-  body: string;
-  headers: Record<string, string>;
-}
-
-const JSON_HEADERS = { 'Content-Type': 'application/json' };
 
 // In-memory cache for GitHub keys (5 min TTL)
 interface CacheEntry {
