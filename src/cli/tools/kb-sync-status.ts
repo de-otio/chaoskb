@@ -52,5 +52,37 @@ export async function kbSyncStatus(): Promise<string> {
     }
   }
 
+  // Fetch device count, rotation state, and pending invites from server
+  if (config.endpoint && config.syncEnabled) {
+    try {
+      const { createSyncClient } = await import('./sync-client.js');
+      const { signedFetch } = await createSyncClient();
+
+      const [devicesResp, invitesResp] = await Promise.allSettled([
+        signedFetch('GET', '/v1/devices'),
+        signedFetch('GET', '/v1/invites'),
+      ]);
+
+      if (devicesResp.status === 'fulfilled' && devicesResp.value.ok) {
+        const data = await devicesResp.value.json() as { devices: Array<{ fingerprint: string; registeredAt: string }> };
+        result.deviceCount = data.devices.length;
+        result.devices = data.devices.map((d) => ({
+          fingerprint: d.fingerprint,
+          registeredAt: d.registeredAt,
+        }));
+      }
+
+      if (invitesResp.status === 'fulfilled' && invitesResp.value.ok) {
+        const data = await invitesResp.value.json() as { invites: Array<{ id: string; project: string; status: string }> };
+        const pending = data.invites.filter((i) => i.status === 'pending');
+        if (pending.length > 0) {
+          result.pendingInvites = pending.length;
+        }
+      }
+    } catch {
+      // Server unreachable — skip remote info
+    }
+  }
+
   return JSON.stringify(result, null, 2);
 }

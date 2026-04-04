@@ -85,8 +85,8 @@ function createMockDeps(): McpDependencies {
 
 describe('MCP Server', () => {
   describe('Tool Definitions', () => {
-    it('should define all 6 tools', () => {
-      expect(TOOL_DEFINITIONS).toHaveLength(6);
+    it('should define all 14 tools', () => {
+      expect(TOOL_DEFINITIONS).toHaveLength(14);
     });
 
     it('should include kb_ingest tool with correct schema', () => {

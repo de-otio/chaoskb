@@ -13,6 +13,14 @@ import { handleKbList } from './tools/kb-list.js';
 import { handleKbDelete } from './tools/kb-delete.js';
 import { handleKbSummary } from './tools/kb-summary.js';
 import { handleKbQueryShared } from './tools/kb-query-shared.js';
+import { handleDeviceLinkStart } from './tools/device-link-start.js';
+import { handleDeviceLinkConfirm } from './tools/device-link-confirm.js';
+import { handleDevicesList } from './tools/devices-list.js';
+import { handleDevicesRemove } from './tools/devices-remove.js';
+import { handleRotateKey } from './tools/rotate-key.js';
+import { handleAuditLog } from './tools/audit-log.js';
+import { handleRevokeAll } from './tools/revoke-all.js';
+import { kbSyncStatus } from './tools/kb-sync-status.js';
 
 export interface McpServerOptions {
   projectName?: string;
@@ -150,6 +158,91 @@ const TOOL_DEFINITIONS = [
       required: ['query', 'project'],
     },
   },
+  {
+    name: 'kb_sync_status',
+    description:
+      'Show sync status, security tier, key type, device count, rotation state, and pending invites.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {},
+    },
+  },
+  {
+    name: 'device_link_start',
+    description:
+      'Generate a device link code on this device. Share the code with your new device to link it.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {},
+    },
+  },
+  {
+    name: 'device_link_confirm',
+    description:
+      'Confirm a device link on the new device by submitting the link code from the existing device.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        linkCode: { type: 'string', description: 'The link code from the existing device' },
+      },
+      required: ['linkCode'],
+    },
+  },
+  {
+    name: 'devices_list',
+    description:
+      'List all registered devices for this account with fingerprints and registration dates.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {},
+    },
+  },
+  {
+    name: 'devices_remove',
+    description:
+      'Remove a registered device by fingerprint. The device will stop syncing on its next attempt.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        fingerprint: { type: 'string', description: 'Fingerprint of the device to remove' },
+      },
+      required: ['fingerprint'],
+    },
+  },
+  {
+    name: 'rotate_key',
+    description:
+      'Initiate SSH key rotation. Re-wraps the master key with a new SSH key and registers it with the server.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        newKeyPath: { type: 'string', description: 'Path to the new SSH key (auto-detects if omitted)' },
+      },
+    },
+  },
+  {
+    name: 'audit_log',
+    description:
+      'Show the device audit log: registrations, rotations, revocations, and device link events.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        limit: { type: 'number', description: 'Maximum number of events to return (default: 50)' },
+      },
+    },
+  },
+  {
+    name: 'revoke_all',
+    description:
+      'Emergency: revoke all device keys. All devices lose sync access and must re-register. Requires confirmation string "REVOKE ALL".',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        confirmation: { type: 'string', description: 'Must be exactly "REVOKE ALL" to confirm' },
+      },
+      required: ['confirmation'],
+    },
+  },
 ];
 
 export function createMcpServer(deps: McpDependencies): Server {
@@ -273,6 +366,48 @@ export function createMcpServer(deps: McpDependencies): Server {
             },
             deps,
           );
+          return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+        }
+        case 'kb_sync_status': {
+          const result = await kbSyncStatus();
+          return { content: [{ type: 'text', text: result }] };
+        }
+        case 'device_link_start': {
+          const result = await handleDeviceLinkStart({});
+          return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+        }
+        case 'device_link_confirm': {
+          const result = await handleDeviceLinkConfirm({
+            linkCode: (args as Record<string, unknown>).linkCode as string,
+          });
+          return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+        }
+        case 'devices_list': {
+          const result = await handleDevicesList({});
+          return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+        }
+        case 'devices_remove': {
+          const result = await handleDevicesRemove({
+            fingerprint: (args as Record<string, unknown>).fingerprint as string,
+          });
+          return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+        }
+        case 'rotate_key': {
+          const result = await handleRotateKey({
+            newKeyPath: (args as Record<string, unknown>).newKeyPath as string | undefined,
+          });
+          return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+        }
+        case 'audit_log': {
+          const result = await handleAuditLog({
+            limit: (args as Record<string, unknown>).limit as number | undefined,
+          });
+          return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+        }
+        case 'revoke_all': {
+          const result = await handleRevokeAll({
+            confirmation: (args as Record<string, unknown>).confirmation as string,
+          });
           return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
         }
         default:
