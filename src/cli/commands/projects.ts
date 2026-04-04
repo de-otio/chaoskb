@@ -1,6 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { loadConfig, saveConfig, CHAOSKB_DIR } from './setup.js';
+import { saveConfig, CHAOSKB_DIR } from './setup.js';
 import type { ChaosKBConfig } from '../mcp-server.js';
 import { SequenceCounter } from '../../sync/sequence.js';
 

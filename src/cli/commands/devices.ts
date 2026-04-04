@@ -88,8 +88,6 @@ function sleep(ms: number): Promise<void> {
  * When it does, wraps the master key with that key and uploads it.
  */
 export async function devicesAddCommand(): Promise<void> {
-  const { signedFetch } = await createSyncClient();
-
   // 1. Generate link code
   const linkCode = generateLinkCode(10);
   const codeHash = hashCode(linkCode);

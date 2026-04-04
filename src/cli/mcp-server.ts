@@ -265,12 +265,12 @@ export function createMcpServer(deps: McpDependencies): Server {
   }
 
   /** Get deps for all named KBs (for cross-KB search). */
-  function getAllKBDeps(): McpDependencies[] {
+  async function getAllKBDeps(): Promise<McpDependencies[]> {
     try {
-      const { listKBs } = require('./commands/kb.js') as { listKBs: () => Array<{ name: string }> };
+      const { listKBs } = await import('./commands/kb.js');
       const kbs = listKBs();
       if (kbs.length === 0) return [deps]; // No named KBs, use default
-      return kbs.map((kb) => ({
+      return kbs.map((kb: { name: string }) => ({
         ...deps,
         db: deps.dbManager.getNamedKBDb(kb.name),
       }));
@@ -310,7 +310,7 @@ export function createMcpServer(deps: McpDependencies): Server {
           }
 
           // Cross-KB search: query all KBs and merge results by score
-          const allDeps = getAllKBDeps();
+          const allDeps = await getAllKBDeps();
           if (allDeps.length <= 1) {
             const result = await handleKbQuery(queryInput, allDeps[0] ?? deps);
             return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };

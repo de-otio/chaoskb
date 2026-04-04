@@ -100,7 +100,7 @@ export async function upgradeTierCommand(tier: string, options?: { dryRun?: bool
   }
 }
 
-async function upgradeToEnhanced(
+async function _upgradeToEnhanced(
   masterKey: import('../../crypto/types.js').ISecureBuffer,
   config: { securityTier: string; projects: Array<{ name: string; createdAt: string }> },
 ): Promise<void> {
