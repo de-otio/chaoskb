@@ -50,7 +50,7 @@ function mockChallengeConsumed(nonce: string) {
     Attributes: {
       PK: `CHALLENGE#${nonce}`,
       SK: 'META',
-      expiresAt: new Date(Date.now() + 60000).toISOString(),
+      expiresAtISO: new Date(Date.now() + 60000).toISOString(),
     },
   });
 }
@@ -68,7 +68,7 @@ function mockChallengeExpired(nonce: string) {
     Attributes: {
       PK: `CHALLENGE#${nonce}`,
       SK: 'META',
-      expiresAt: new Date(Date.now() - 1000).toISOString(),
+      expiresAtISO: new Date(Date.now() - 1000).toISOString(),
     },
   });
 }

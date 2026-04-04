@@ -54,7 +54,7 @@ export async function logAuditEvent(
         fingerprint: event.fingerprint,
         metadata: event.metadata,
         timestamp: now,
-        ttl,
+        expiresAt: ttl,
       },
     }),
   );

@@ -53,7 +53,7 @@ export async function createNotification(
         deviceInfo,
         acknowledged: false,
         timestamp: now,
-        ttl,
+        expiresAt: ttl,
       },
     }),
   );

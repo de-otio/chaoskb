@@ -122,7 +122,7 @@ export async function handleChallenge(
   const nonce = crypto.randomBytes(32).toString('base64');
   const now = Math.floor(Date.now() / 1000);
   const ttl = now + CHALLENGE_EXPIRY_SECONDS + 60; // DynamoDB TTL: generous buffer
-  const expiresAt = new Date((now + CHALLENGE_EXPIRY_SECONDS) * 1000).toISOString();
+  const expiresAtISO = new Date((now + CHALLENGE_EXPIRY_SECONDS) * 1000).toISOString();
 
   await ddb.send(
     new PutCommand({
@@ -130,8 +130,8 @@ export async function handleChallenge(
       Item: {
         PK: `CHALLENGE#${nonce}`,
         SK: 'META',
-        expiresAt,
-        ttl,
+        expiresAtISO,
+        expiresAt: ttl,
       },
     }),
   );
@@ -141,7 +141,7 @@ export async function handleChallenge(
   return {
     statusCode: 200,
     headers: JSON_HEADERS,
-    body: JSON.stringify({ challenge: nonce, expiresAt }),
+    body: JSON.stringify({ challenge: nonce, expiresAt: expiresAtISO }),
   };
 }
 
@@ -234,7 +234,7 @@ export async function handleRegister(
   }
 
   // Check challenge expiry on the consumed item
-  if (!challengeItem || new Date(challengeItem['expiresAt'] as string) < new Date()) {
+  if (!challengeItem || new Date(challengeItem['expiresAtISO'] as string) < new Date()) {
     return {
       statusCode: 400,
       headers: JSON_HEADERS,

@@ -70,8 +70,7 @@ export async function handleCreateLinkCode(
         SK: `LINK#${parsed.codeHash}`,
         newPublicKey: null,
         failureCount: 0,
-        expiresAt,
-        ttl,
+        expiresAt: ttl,
       },
     }),
   );
@@ -302,8 +301,7 @@ export async function handleCreateLinkCodeFull(
         SK: `LINK#${parsed.codeHash}`,
         newPublicKey: null,
         failureCount: 0,
-        expiresAt,
-        ttl,
+        expiresAt: ttl,
       },
     }),
   );
@@ -316,8 +314,7 @@ export async function handleCreateLinkCodeFull(
         PK: `LINK_CODE#${parsed.codeHash}`,
         SK: 'META',
         tenantId,
-        expiresAt,
-        ttl,
+        expiresAt: ttl,
       },
     }),
   );

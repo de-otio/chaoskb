@@ -45,7 +45,7 @@ describe('logAuditEvent', () => {
     expect(item.fingerprint).toBe('abc123');
     expect(item.metadata).toEqual({ publicKey: 'key-data' });
     expect(item.timestamp).toBeDefined();
-    expect(item.ttl).toBeGreaterThan(Math.floor(Date.now() / 1000));
+    expect(item.expiresAt).toBeGreaterThan(Math.floor(Date.now() / 1000));
   });
 
   it('should handle events without metadata', async () => {

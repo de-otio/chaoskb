@@ -229,8 +229,7 @@ export async function handleCreateInvite(
         encryptedPayload: parsed.encryptedPayload,
         role: parsed.role,
         createdAt,
-        expiresAt,
-        ttl,
+        expiresAt: ttl,
       },
     }),
   );
