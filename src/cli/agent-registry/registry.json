@@ -22,14 +22,14 @@
       "displayName": "Claude Code",
       "platforms": ["darwin", "linux", "win32"],
       "installPaths": {
-        "darwin": ["/usr/local/bin/claude"],
-        "linux": ["/usr/local/bin/claude", "/usr/bin/claude"],
+        "darwin": ["/usr/local/bin/claude", "~/.local/bin/claude", "/opt/homebrew/bin/claude"],
+        "linux": ["/usr/local/bin/claude", "/usr/bin/claude", "~/.local/bin/claude"],
         "win32": ["C:\\Program Files\\Claude\\claude.exe"]
       },
       "configPath": {
-        "darwin": "~/.claude.json",
-        "linux": "~/.claude.json",
-        "win32": "~/.claude.json"
+        "darwin": "~/.claude/settings.json",
+        "linux": "~/.claude/settings.json",
+        "win32": "~/.claude/settings.json"
       },
       "configFormat": "json",
       "supportsProjectConfig": false
