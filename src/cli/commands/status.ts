@@ -15,27 +15,34 @@ export async function statusCommand(options: StatusOptions): Promise<void> {
   console.log('  ==============');
   console.log('');
 
+  // Registered agents (show even before config exists)
+  console.log('  Registered agents:');
+  const agents = await detectAgents();
+  const registeredAgents = agents.filter((a) => a.registered);
+  if (registeredAgents.length === 0) {
+    console.log('    (none — run `chaoskb-mcp register`)');
+  } else {
+    for (const agent of registeredAgents) {
+      console.log(`    - ${agent.config.displayName}`);
+    }
+  }
+  console.log('');
+
   if (!config) {
-    console.log('  Not configured. Run `chaoskb-mcp setup` first.');
+    console.log('  Knowledge base: not initialized yet');
+    console.log('');
+    if (registeredAgents.length > 0) {
+      console.log('  Ready to use. Restart your agent, then try:');
+      console.log('    "Save this to my KB: https://example.com/article"');
+    } else {
+      console.log('  Run `chaoskb-mcp register` to set up your agent.');
+    }
     console.log('');
     return;
   }
 
   // Security tier
   console.log(`  Security tier:  ${config.securityTier}`);
-  console.log('');
-
-  // Registered agents
-  console.log('  Registered agents:');
-  const agents = await detectAgents();
-  const registeredAgents = agents.filter((a) => a.registered);
-  if (registeredAgents.length === 0) {
-    console.log('    (none)');
-  } else {
-    for (const agent of registeredAgents) {
-      console.log(`    - ${agent.config.displayName}`);
-    }
-  }
   console.log('');
 
   // Storage usage

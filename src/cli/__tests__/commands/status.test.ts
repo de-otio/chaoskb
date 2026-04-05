@@ -24,12 +24,12 @@ describe('status command', () => {
     });
   });
 
-  it('should show "not configured" when no config exists', async () => {
+  it('should show "not initialized" when no config exists', async () => {
     vi.mocked(loadConfig).mockResolvedValue(null);
 
     await statusCommand({});
 
-    expect(consoleOutput.some((l) => l.includes('Not configured'))).toBe(true);
+    expect(consoleOutput.some((l) => l.includes('not initialized'))).toBe(true);
   });
 
   it('should display security tier', async () => {
