@@ -126,7 +126,7 @@ describe('POST /v1/link-confirm', () => {
         SK: `LINK#${codeHash}`,
         newPublicKey: null,
         failureCount: 0,
-        expiresAt: new Date(Date.now() - 60_000).toISOString(),
+        expiresAtISO: new Date(Date.now() - 60_000).toISOString(),
       },
     });
 

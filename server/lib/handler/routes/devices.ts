@@ -59,7 +59,7 @@ export async function handleCreateLinkCode(
   }
 
   const now = new Date();
-  const expiresAt = new Date(now.getTime() + 5 * 60 * 1000).toISOString();
+  const expiresAtISO = new Date(now.getTime() + 5 * 60 * 1000).toISOString();
   const ttl = Math.floor(now.getTime() / 1000) + 10 * 60; // DynamoDB TTL: 10 min (generous)
 
   await ddb.send(
@@ -70,6 +70,7 @@ export async function handleCreateLinkCode(
         SK: `LINK#${parsed.codeHash}`,
         newPublicKey: null,
         failureCount: 0,
+        expiresAtISO,
         expiresAt: ttl,
       },
     }),
@@ -181,8 +182,9 @@ export async function handleLinkConfirm(
 
   const linkRecord = linkResult.Item;
 
-  // Check expiry
-  if (new Date(linkRecord['expiresAt'] as string) < new Date()) {
+  // Check expiry (expiresAtISO is the ISO string for app-level checks;
+  // expiresAt is the epoch number for DynamoDB TTL auto-deletion)
+  if (new Date(linkRecord['expiresAtISO'] as string) < new Date()) {
     return {
       statusCode: 410,
       headers: JSON_HEADERS,
@@ -289,7 +291,7 @@ export async function handleCreateLinkCodeFull(
   }
 
   const now = new Date();
-  const expiresAt = new Date(now.getTime() + 5 * 60 * 1000).toISOString();
+  const expiresAtISO = new Date(now.getTime() + 5 * 60 * 1000).toISOString();
   const ttl = Math.floor(now.getTime() / 1000) + 10 * 60;
 
   // Write the tenant-scoped link record
@@ -301,6 +303,7 @@ export async function handleCreateLinkCodeFull(
         SK: `LINK#${parsed.codeHash}`,
         newPublicKey: null,
         failureCount: 0,
+        expiresAtISO,
         expiresAt: ttl,
       },
     }),
@@ -324,7 +327,7 @@ export async function handleCreateLinkCodeFull(
   return {
     statusCode: 201,
     headers: JSON_HEADERS,
-    body: JSON.stringify({ status: 'created', expiresAt }),
+    body: JSON.stringify({ status: 'created', expiresAt: expiresAtISO }),
   };
 }
 
