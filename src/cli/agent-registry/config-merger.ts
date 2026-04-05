@@ -108,6 +108,80 @@ export async function mergeAgentConfig(
 }
 
 /**
+ * Find the nearest git workspace root from a starting directory.
+ */
+function findWorkspaceRoot(startDir: string): string | null {
+  let dir = startDir;
+  while (dir !== path.dirname(dir)) {
+    if (fs.existsSync(path.join(dir, '.git'))) {
+      return dir;
+    }
+    dir = path.dirname(dir);
+  }
+  return null;
+}
+
+/**
+ * Register ChaosKB in the workspace .mcp.json file.
+ * Used by the VS Code extension which reads MCP servers from .mcp.json,
+ * not from ~/.claude/settings.json.
+ *
+ * Uses the short `chaoskb-mcp` command (not absolute paths) since
+ * .mcp.json is often checked into git and shared across machines.
+ */
+export function registerInWorkspaceMcpJson(workspaceRoot: string): boolean {
+  const mcpJsonPath = path.join(workspaceRoot, '.mcp.json');
+
+  // Read existing .mcp.json or create new
+  let config: McpConfig;
+  try {
+    const raw = fs.readFileSync(mcpJsonPath, 'utf-8');
+    config = JSON.parse(raw) as McpConfig;
+  } catch {
+    config = {};
+  }
+
+  if (!config.mcpServers) {
+    config.mcpServers = {};
+  }
+
+  // Already registered
+  if (config.mcpServers.chaoskb) {
+    return false;
+  }
+
+  // Use short command name — .mcp.json may be shared across machines
+  config.mcpServers.chaoskb = {
+    command: 'chaoskb-mcp',
+    args: [],
+  };
+
+  fs.writeFileSync(mcpJsonPath, JSON.stringify(config, null, 2) + '\n');
+  return true;
+}
+
+/**
+ * Auto-detect VS Code workspace and register in .mcp.json if applicable.
+ * Returns the workspace root if registration succeeded, null otherwise.
+ */
+export function autoRegisterVSCodeWorkspace(): string | null {
+  // Only run when inside VS Code
+  if (!process.env['VSCODE_CLI'] && !process.env['VSCODE_PID']) {
+    return null;
+  }
+
+  const workspaceRoot = findWorkspaceRoot(process.cwd());
+  if (!workspaceRoot) return null;
+
+  try {
+    const added = registerInWorkspaceMcpJson(workspaceRoot);
+    return added ? workspaceRoot : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Remove the ChaosKB MCP server entry from an agent's config file.
  * Preserves all other entries.
  */

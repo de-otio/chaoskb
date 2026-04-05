@@ -8,19 +8,17 @@
  */
 
 import { detectAgents } from './agent-registry/detector.js';
-import { mergeAgentConfig } from './agent-registry/config-merger.js';
+import { mergeAgentConfig, autoRegisterVSCodeWorkspace } from './agent-registry/config-merger.js';
 
 async function main(): Promise<void> {
   const agents = await detectAgents();
   const installed = agents.filter((a) => a.installed);
 
-  if (installed.length === 0) return;
-
   const registered: string[] = [];
 
+  // Register with detected agents (global config files)
   for (const agent of installed) {
     try {
-      // Skip if already registered with current paths
       if (agent.registered) {
         registered.push(`${agent.config.displayName} (already registered)`);
         continue;
@@ -33,9 +31,18 @@ async function main(): Promise<void> {
     }
   }
 
+  // If running inside VS Code, also register in the workspace .mcp.json
+  // (the VS Code extension reads MCP servers from .mcp.json, not global settings)
+  try {
+    const workspaceRoot = autoRegisterVSCodeWorkspace();
+    if (workspaceRoot) {
+      registered.push('VS Code workspace (.mcp.json)');
+    }
+  } catch {
+    // Best-effort
+  }
+
   if (registered.length > 0) {
-    // Use stderr — npm suppresses stdout/stderr from postinstall, but the
-    // message is visible when running with --foreground-scripts or npm >=10.
     process.stderr.write(
       `\n  ChaosKB registered with: ${registered.join(', ')}\n` +
       `  Restart your agent to activate.\n\n`,

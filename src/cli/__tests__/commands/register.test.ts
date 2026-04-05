@@ -17,6 +17,7 @@ vi.mock('../../agent-registry/config-merger.js', () => ({
   mergeAgentConfig: vi.fn(),
   removeAgentConfig: vi.fn(),
   previewAgentConfig: vi.fn(),
+  autoRegisterVSCodeWorkspace: vi.fn().mockReturnValue(null),
   MCP_SCRIPT_PATH: '/mock/dist/cli/index.js',
 }));
 

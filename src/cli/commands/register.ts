@@ -4,6 +4,7 @@ import {
   mergeAgentConfig,
   previewAgentConfig,
   removeAgentConfig,
+  autoRegisterVSCodeWorkspace,
   MCP_SCRIPT_PATH,
 } from '../agent-registry/config-merger.js';
 import type { DetectedAgent } from '../agent-registry/types.js';
@@ -150,6 +151,13 @@ export async function registerCommand(options: RegisterOptions): Promise<void> {
   }
   if (options.projectName) {
     console.log(`  Project: ${options.projectName}`);
+  }
+
+  // If running inside VS Code, also register in the workspace .mcp.json
+  const workspaceRoot = autoRegisterVSCodeWorkspace();
+  if (workspaceRoot) {
+    console.log(`  Registered in workspace .mcp.json (${workspaceRoot})`);
+    registered.push('VS Code workspace');
   }
 
   // Print manual config snippet for project-level MCP config files
