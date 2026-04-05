@@ -295,7 +295,9 @@ describe('authenticateRequest', () => {
   });
 
   it('should reject when tenant not found (with timing equalization)', async () => {
-    // QueryCommand: no items
+    // QueryCommand: no tenant META
+    mockSend.mockResolvedValueOnce({ Items: [] });
+    // QueryCommand: no KEY_ALIAS record either
     mockSend.mockResolvedValueOnce({ Items: [] });
 
     const event = makeEvent();

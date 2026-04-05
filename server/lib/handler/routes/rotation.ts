@@ -27,6 +27,10 @@ function fingerprintFromPublicKey(publicKeyBase64: string): string {
   return crypto.createHash('sha256').update(Buffer.from(publicKeyBase64, 'base64')).digest('base64');
 }
 
+function tenantIdFromPublicKey(publicKeyBase64: string): string {
+  return crypto.createHash('sha256').update(publicKeyBase64).digest('hex').slice(0, 32);
+}
+
 
 function isValidBase64(value: string): boolean {
   if (!value || value.length < 4 || value.length > 8192) return false;
@@ -152,6 +156,22 @@ export async function handleRotateStart(
         SK: `WRAPPED_KEY#${newFingerprint}`,
         data: request.wrappedBlob,
         updatedAt: now,
+      },
+    }),
+  );
+
+  // Write a KEY_ALIAS record so auth middleware can resolve the new key's
+  // derived tenantId back to this tenant during rotation
+  const newKeyTenantId = tenantIdFromPublicKey(request.newPublicKey);
+  await ddb.send(
+    new PutCommand({
+      TableName: tableName,
+      Item: {
+        PK: `KEY_ALIAS#${newKeyTenantId}`,
+        SK: 'META',
+        originalTenantId: tenantId,
+        newPublicKey: request.newPublicKey,
+        createdAt: now,
       },
     }),
   );
@@ -326,6 +346,18 @@ async function completeRotation(
       Key: {
         PK: `TENANT#${tenantId}`,
         SK: 'ROTATION',
+      },
+    }),
+  );
+
+  // Delete the KEY_ALIAS lookup record for the new key
+  const newKeyTenantId = tenantIdFromPublicKey(newPublicKey);
+  await ddb.send(
+    new DeleteCommand({
+      TableName: tableName,
+      Key: {
+        PK: `KEY_ALIAS#${newKeyTenantId}`,
+        SK: 'META',
       },
     }),
   );

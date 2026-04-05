@@ -210,9 +210,9 @@ export const handler = async (event: LambdaFunctionURLEvent): Promise<LambdaFunc
       return response(result.statusCode, result.body, result.headers);
     }
 
-    const deviceDeleteMatch = path.match(/^\/v1\/devices\/([^/]+)$/);
+    const deviceDeleteMatch = path.match(/^\/v1\/devices\/(.+)$/);
     if (deviceDeleteMatch && method === 'DELETE') {
-      const fingerprint = deviceDeleteMatch[1];
+      const fingerprint = decodeURIComponent(deviceDeleteMatch[1]);
       const result = await handleDeleteDevice(tenantId, fingerprint, ddb, TABLE_NAME);
       return response(result.statusCode, result.body, result.headers);
     }

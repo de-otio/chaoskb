@@ -238,25 +238,80 @@ export async function authenticateRequest(
     }),
   );
 
-  if (!result.Items || result.Items.length === 0) {
-    // Perform a dummy signature verification to equalize timing with the
-    // tenant-exists path. Without this, an attacker can distinguish
-    // "tenant not found" (fast) from "bad signature" (slow) by measuring
-    // response time.
-    const dummyKey = Buffer.alloc(32, 0x01).toString('base64');
-    try {
-      verifyEd25519Signature(dummyKey, 'dummy', 'dummy');
-    } catch {
-      // Expected to fail — this is just for timing equalization
-    }
-    throw new AuthError('Unknown public key', 401);
-  }
+  let resolvedTenantId = tenantId;
 
-  const tenant = result.Items[0];
-  const storedKey = Buffer.from(tenant['publicKey'] as string);
-  const suppliedKey = Buffer.from(publicKey);
-  if (storedKey.length !== suppliedKey.length || !crypto.timingSafeEqual(storedKey, suppliedKey)) {
-    throw new AuthError('Public key mismatch', 401);
+  if (!result.Items || result.Items.length === 0) {
+    // Primary tenant lookup failed — check if this key is a rotation newPublicKey.
+    // rotate-start writes a KEY_ALIAS# record that maps the new key's derived tenantId
+    // back to the original tenant during rotation.
+    const aliasResult = await ddb.send(
+      new QueryCommand({
+        TableName: tableName,
+        KeyConditionExpression: 'PK = :pk AND SK = :sk',
+        ExpressionAttributeValues: {
+          ':pk': `KEY_ALIAS#${tenantId}`,
+          ':sk': 'META',
+        },
+        Limit: 1,
+      }),
+    );
+
+    if (!aliasResult.Items || aliasResult.Items.length === 0) {
+      // Perform a dummy signature verification to equalize timing
+      const dummyKey = Buffer.alloc(32, 0x01).toString('base64');
+      try {
+        verifyEd25519Signature(dummyKey, 'dummy', 'dummy');
+      } catch {
+        // Expected to fail — timing equalization only
+      }
+      throw new AuthError('Unknown public key', 401);
+    }
+
+    // Resolve to the original tenant
+    resolvedTenantId = aliasResult.Items[0]['originalTenantId'] as string;
+
+    // Re-fetch the original tenant META
+    const originalResult = await ddb.send(
+      new QueryCommand({
+        TableName: tableName,
+        KeyConditionExpression: 'PK = :pk AND SK = :sk',
+        ExpressionAttributeValues: {
+          ':pk': `TENANT#${resolvedTenantId}`,
+          ':sk': 'META',
+        },
+        Limit: 1,
+      }),
+    );
+
+    if (!originalResult.Items || originalResult.Items.length === 0) {
+      throw new AuthError('Unknown public key', 401);
+    }
+
+    const originalTenant = originalResult.Items[0];
+    const newPk = originalTenant['newPublicKey'] as string | undefined;
+    if (!newPk || originalTenant['rotationState'] !== 'ROTATION_STARTED') {
+      throw new AuthError('Unknown public key', 401);
+    }
+    const storedNewKey = Buffer.from(newPk);
+    const suppliedKey = Buffer.from(publicKey);
+    if (suppliedKey.length !== storedNewKey.length || !crypto.timingSafeEqual(suppliedKey, storedNewKey)) {
+      throw new AuthError('Public key mismatch', 401);
+    }
+  } else {
+    const tenant = result.Items[0];
+    const storedKey = Buffer.from(tenant['publicKey'] as string);
+    const suppliedKey = Buffer.from(publicKey);
+    if (storedKey.length !== suppliedKey.length || !crypto.timingSafeEqual(storedKey, suppliedKey)) {
+      // Primary key doesn't match — check if this key is the newPublicKey during rotation
+      const newPk = tenant['newPublicKey'] as string | undefined;
+      if (!newPk || tenant['rotationState'] !== 'ROTATION_STARTED') {
+        throw new AuthError('Public key mismatch', 401);
+      }
+      const storedNewKey = Buffer.from(newPk);
+      if (suppliedKey.length !== storedNewKey.length || !crypto.timingSafeEqual(suppliedKey, storedNewKey)) {
+        throw new AuthError('Public key mismatch', 401);
+      }
+    }
   }
 
   // Verify the SSH signature against the canonical string (includes sequence)
@@ -281,10 +336,10 @@ export async function authenticateRequest(
 
   // Check sequence number for replay protection (after signature verification)
   if (parsed.sequence > 0) {
-    await checkSequence(ddb, tableName, tenantId, fingerprint, parsed.sequence);
+    await checkSequence(ddb, tableName, resolvedTenantId, fingerprint, parsed.sequence);
   }
 
-  return { tenantId, publicKey, fingerprint };
+  return { tenantId: resolvedTenantId, publicKey, fingerprint };
 }
 
 /**
