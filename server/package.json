@@ -1,6 +1,6 @@
 {
   "name": "@de-otio/chaoskb-server",
-  "version": "0.2.14",
+  "version": "0.3.0",
   "description": "ChaosKB server - CDK construct library for the hosted backend",
   "license": "MIT",
   "repository": {
