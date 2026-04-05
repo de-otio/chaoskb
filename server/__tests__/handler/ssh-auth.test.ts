@@ -20,7 +20,7 @@ import {
   verifyTimestamp,
   buildCanonicalString,
   fingerprintFromPublicKey,
-  verifyEd25519Signature,
+  verifySSHSignature,
   checkSequence,
   authenticateRequest,
   AuthError,
@@ -31,8 +31,18 @@ const ddb = { send: mockSend } as any;
 
 // Generate a real Ed25519 key pair for tests
 const { publicKey: ed25519PublicKey, privateKey: ed25519PrivateKey } = crypto.generateKeyPairSync('ed25519');
-const publicKeyBuffer = ed25519PublicKey.export({ type: 'spki', format: 'der' }).subarray(12);
-const VALID_PUBLIC_KEY = publicKeyBuffer.toString('base64');
+const rawPublicKeyBytes = ed25519PublicKey.export({ type: 'spki', format: 'der' }).subarray(12);
+// Encode as SSH wire format: string "ssh-ed25519" + string <32-byte key>
+function sshString(data: Buffer): Buffer {
+  const len = Buffer.alloc(4);
+  len.writeUInt32BE(data.length);
+  return Buffer.concat([len, data]);
+}
+const sshPublicKeyBlob = Buffer.concat([
+  sshString(Buffer.from('ssh-ed25519')),
+  sshString(rawPublicKeyBytes),
+]);
+const VALID_PUBLIC_KEY = sshPublicKeyBlob.toString('base64');
 
 function signCanonical(canonical: string): string {
   return crypto.sign(null, Buffer.from(canonical), ed25519PrivateKey).toString('base64');
@@ -178,26 +188,26 @@ describe('fingerprintFromPublicKey', () => {
   });
 });
 
-describe('verifyEd25519Signature', () => {
+describe('verifySSHSignature', () => {
   it('should return true for valid signature', () => {
     const data = 'test-canonical-string';
     const sig = signCanonical(data);
-    expect(verifyEd25519Signature(VALID_PUBLIC_KEY, data, sig)).toBe(true);
+    expect(verifySSHSignature(VALID_PUBLIC_KEY, data, sig)).toBe(true);
   });
 
   it('should return false for invalid signature', () => {
     const data = 'test-canonical-string';
     const badSig = crypto.randomBytes(64).toString('base64');
-    expect(verifyEd25519Signature(VALID_PUBLIC_KEY, data, badSig)).toBe(false);
+    expect(verifySSHSignature(VALID_PUBLIC_KEY, data, badSig)).toBe(false);
   });
 
   it('should return false for dummy key (timing equalization)', () => {
     const dummyKey = Buffer.alloc(32, 0x01).toString('base64');
-    expect(verifyEd25519Signature(dummyKey, 'dummy', 'dummy')).toBe(false);
+    expect(verifySSHSignature(dummyKey, 'dummy', 'dummy')).toBe(false);
   });
 
   it('should return false for corrupted key data', () => {
-    expect(verifyEd25519Signature('not-valid-base64!!!', 'data', 'sig')).toBe(false);
+    expect(verifySSHSignature('not-valid-base64!!!', 'data', 'sig')).toBe(false);
   });
 });
 
