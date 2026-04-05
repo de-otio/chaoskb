@@ -1,8 +1,14 @@
 # Chat Agent Setup
 
-ChaosKB runs as an MCP server that any compatible chat agent can use. The installer auto-registers with detected agents, but you can also set it up manually.
+ChaosKB runs as an MCP server that any compatible chat agent can use. When you install ChaosKB with `npm install -g @de-otio/chaoskb-client`, it automatically registers with all detected agents (Claude Code, Cursor, VS Code, Claude Desktop).
 
-## Auto-registration
+## After install
+
+1. **Restart your agent** (close and reopen Claude Code, Cursor, etc.)
+2. **Verify it works** — ask your agent: *"What ChaosKB tools are available?"*
+3. **Try it** — tell your agent: *"Save this article to my KB: https://example.com"*
+
+If ChaosKB wasn't auto-detected during install, register manually:
 
 ```bash
 chaoskb-mcp register                    # detect and register with all installed agents
@@ -91,13 +97,13 @@ When the agent starts ChaosKB:
 
 Startup takes 1-3 seconds.
 
-## Verifying registration
+## Verifying it works
 
-After registration, restart your chat agent and ask:
+After restarting your agent, ask:
 
-> "What tools do you have from ChaosKB?"
+> "What ChaosKB tools are available?"
 
-The agent should list the available tools, including:
+If ChaosKB is working, the agent will list the available tools:
 
 **Knowledge base:** `kb_ingest`, `kb_query`, `kb_list`, `kb_delete`, `kb_summary`, `kb_query_shared`
 

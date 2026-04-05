@@ -34,12 +34,12 @@ async function main(): Promise<void> {
   }
 
   if (registered.length > 0) {
-    console.log('');
-    console.log(`  ChaosKB registered with: ${registered.join(', ')}`);
-    console.log('');
-    console.log('  Restart your agent to activate. Then try:');
-    console.log('    "Save this article to my KB: https://example.com/article"');
-    console.log('');
+    // Use stderr — npm suppresses stdout/stderr from postinstall, but the
+    // message is visible when running with --foreground-scripts or npm >=10.
+    process.stderr.write(
+      `\n  ChaosKB registered with: ${registered.join(', ')}\n` +
+      `  Restart your agent to activate.\n\n`,
+    );
   }
 }
 
