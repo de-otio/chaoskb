@@ -34,6 +34,7 @@
     "build": "tsc && cp cli/agent-registry/registry.json dist/cli/agent-registry/registry.json && cp cli/guide-hashes.json dist/cli/guide-hashes.json",
     "prepublishOnly": "npm run build",
     "prepack": "chmod +x dist/cli/index.js 2>/dev/null || true",
+    "postinstall": "node dist/cli/postinstall.js 2>/dev/null || true",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
