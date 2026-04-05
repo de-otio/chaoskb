@@ -170,7 +170,10 @@ export function autoRegisterVSCodeWorkspace(): string | null {
     return null;
   }
 
-  const workspaceRoot = findWorkspaceRoot(process.cwd());
+  // INIT_CWD is the directory where `npm install` was invoked (set by npm).
+  // process.cwd() during postinstall points to the package install dir, not the user's workspace.
+  const startDir = process.env['INIT_CWD'] || process.cwd();
+  const workspaceRoot = findWorkspaceRoot(startDir);
   if (!workspaceRoot) return null;
 
   try {
