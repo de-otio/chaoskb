@@ -443,24 +443,47 @@ export async function startMcpServer(options: McpServerOptions): Promise<void> {
 
   if (!config) {
     // Auto-bootstrap on first launch
-    process.stderr.write('First launch — setting up ChaosKB...\n');
+    process.stderr.write('[ChaosKB] First launch — creating encrypted knowledge base...\n');
     const { bootstrap } = await import('./bootstrap.js');
     await bootstrap();
     config = await loadConfig();
     if (!config) {
-      process.stderr.write('Bootstrap failed. See ~/.chaoskb/ for details.\n');
+      process.stderr.write('[ChaosKB] Bootstrap failed. See ~/.chaoskb/ for details.\n');
       process.exit(1);
     }
-    process.stderr.write('ChaosKB is ready.\n');
+    process.stderr.write('[ChaosKB] Knowledge base created.\n');
   }
 
   // These would be real implementations in production.
   // The module structure supports dependency injection for testability.
   // For the MCP server startup, we dynamically load the real implementations.
 
-  // Placeholder: in a real build, these come from the actual modules
-  const deps: McpDependencies = await initializeDependencies(options, config);
-  const server = createMcpServer(deps);
+  // Connect the MCP transport immediately so the client sees a fast handshake.
+  // Dependencies (DB, model download) are initialized lazily on first tool call.
+  let deps: McpDependencies | null = null;
+  let depsPromise: Promise<McpDependencies> | null = null;
+  const getDeps = async (): Promise<McpDependencies> => {
+    if (deps) return deps;
+    if (!depsPromise) {
+      depsPromise = initializeDependencies(options, config!).then(d => { deps = d; return d; });
+    }
+    return depsPromise;
+  };
+
+  // Start loading deps in background (don't await — let MCP handshake complete first)
+  getDeps().catch(() => {});
+
+  // Create a proxy that lazily resolves deps on first tool call
+  const lazyDeps = new Proxy({} as McpDependencies, {
+    get(_target, prop) {
+      if (!deps) {
+        throw new Error('ChaosKB is still initializing (downloading embedding model on first launch). Please try again in a moment.');
+      }
+      return (deps as unknown as Record<string | symbol, unknown>)[prop];
+    },
+  });
+
+  const server = createMcpServer(lazyDeps);
   const transport = new StdioServerTransport();
   await server.connect(transport);
 }
@@ -528,16 +551,19 @@ async function initializeDependencies(
 
   // 5. Ensure ONNX model is available and create content pipeline
   const modelManager = new ModelManager();
+  process.stderr.write('[ChaosKB] Loading embedding model...\n');
   const modelPath = await modelManager.ensureModel((downloaded, total) => {
     if (total > 0) {
-      // Write progress to stderr (stdout is reserved for MCP JSON-RPC)
+      const pct = Math.round((downloaded / total) * 100);
+      const mb = (downloaded / 1024 / 1024).toFixed(0);
+      const totalMb = (total / 1024 / 1024).toFixed(0);
       process.stderr.write(
-        `\rDownloading embedding model: ${Math.round((downloaded / total) * 100)}%`,
+        `\r[ChaosKB] Downloading embedding model: ${pct}% (${mb}/${totalMb} MB)`,
       );
     }
   });
-  // Clear the progress line
-  process.stderr.write('\r\x1b[K');
+  // Clear the progress line and confirm
+  process.stderr.write('\r\x1b[K[ChaosKB] Ready.\n');
 
   const embedder = new Embedder(modelPath);
   const pipeline = new ContentPipeline(
