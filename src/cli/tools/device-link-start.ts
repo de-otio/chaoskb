@@ -42,6 +42,6 @@ export async function handleDeviceLinkStart(_input: DeviceLinkStartInput): Promi
   return {
     linkCode,
     expiresInMinutes: 5,
-    instructions: `On the new device, run: chaoskb-mcp devices confirm ${linkCode}`,
+    instructions: `On the new device, tell your agent: "confirm device link with code ${linkCode}"`,
   };
 }

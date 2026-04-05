@@ -97,7 +97,13 @@ After registration, restart your chat agent and ask:
 
 > "What tools do you have from ChaosKB?"
 
-The agent should list `kb_ingest`, `kb_query`, `kb_list`, `kb_delete`, and `kb_summary`.
+The agent should list the available tools, including:
+
+**Knowledge base:** `kb_ingest`, `kb_query`, `kb_list`, `kb_delete`, `kb_summary`, `kb_query_shared`
+
+**Sync & devices:** `kb_sync_status`, `device_link_start`, `device_link_confirm`, `devices_list`, `devices_remove`
+
+**Key management:** `rotate_key`, `audit_log`, `revoke_all`
 
 You can also check which agents have ChaosKB registered:
 
