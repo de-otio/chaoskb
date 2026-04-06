@@ -99,6 +99,8 @@ export interface ISyncService {
   fullSync(): Promise<SyncResult>;
   /** Upload a blob to the server */
   upload(blobId: string, data: Uint8Array): Promise<void>;
+  /** Delete a blob from the server (soft-delete / tombstone) */
+  deleteBlob(blobId: string): Promise<void>;
   /** Get current quota usage */
   getQuota(): Promise<QuotaInfo>;
   /** Write and verify canary blob */

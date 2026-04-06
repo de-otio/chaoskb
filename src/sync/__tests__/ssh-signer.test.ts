@@ -46,12 +46,14 @@ describe('SSHSigner', () => {
   });
 
   describe('computeBodyHash', () => {
-    it('should compute SHA-256 hex digest of body', () => {
+    it('should compute SHA-256 hex digest of base64-encoded body', () => {
       const signer = new SSHSigner(keyPath);
       const body = new TextEncoder().encode('hello world');
       const hash = signer.computeBodyHash(body);
 
-      const expected = createHash('sha256').update(body).digest('hex');
+      // Body is base64-encoded to match Lambda function URL behavior
+      const base64Body = Buffer.from(body).toString('base64');
+      const expected = createHash('sha256').update(base64Body).digest('hex');
       expect(hash).toBe(expected);
     });
 

@@ -92,6 +92,16 @@ export class SyncService implements ISyncService {
   }
 
   /**
+   * Delete a blob from the server (soft-delete / tombstone).
+   */
+  async deleteBlob(blobId: string): Promise<void> {
+    const response = await this.httpClient.delete(`/v1/blobs/${blobId}`);
+    if (!response.ok && response.status !== 404) {
+      throw new Error(`Failed to delete blob ${blobId}: HTTP ${response.status}`);
+    }
+  }
+
+  /**
    * Get current quota usage from the server.
    *
    * Fetches quota info from the blob count endpoint, which includes

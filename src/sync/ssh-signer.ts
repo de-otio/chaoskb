@@ -50,13 +50,20 @@ export class SSHSigner {
   }
 
   /**
-   * Compute SHA-256 hex digest of body bytes. Empty string if no body.
+   * Compute SHA-256 hex digest of body as seen by the server.
+   *
+   * Lambda function URLs base64-encode binary bodies (Content-Type:
+   * application/octet-stream), so `event.body` on the server side is
+   * the base64 string, not the raw bytes. We must hash the same value
+   * the server will hash for signature verification to succeed.
    */
   computeBodyHash(body?: Uint8Array): string {
     if (!body || body.length === 0) {
       return '';
     }
-    return createHash('sha256').update(body).digest('hex');
+    // Hash the base64-encoded form, matching what Lambda sets as event.body
+    const base64Body = Buffer.from(body).toString('base64');
+    return createHash('sha256').update(base64Body).digest('hex');
   }
 
   /**

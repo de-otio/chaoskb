@@ -14,7 +14,7 @@ export async function handleKbDelete(
   input: KbDeleteInput,
   deps: McpDependencies,
 ): Promise<KbDeleteResult> {
-  const { db } = deps;
+  const { db, syncService } = deps;
 
   // 1. Verify the source exists
   const source = db.sources.getById(input.id);
@@ -35,13 +35,26 @@ export async function handleKbDelete(
   // 3. Remove from embedding index
   db.embeddingIndex.remove(input.id);
 
-  // 4. Set sync status to pending_delete for the source and all chunks
-  db.syncStatus.set(input.id, SyncStatus.PendingDelete);
-
-  // Also mark chunk blobs for deletion
+  // 4. Delete blobs from sync server and update local status
   const chunks = db.chunks.getBySourceId(input.id);
-  for (const chunk of chunks) {
-    db.syncStatus.set(chunk.id, SyncStatus.PendingDelete);
+  const allBlobIds = [input.id, ...chunks.map((c) => c.id)];
+
+  if (syncService) {
+    try {
+      for (const blobId of allBlobIds) {
+        await syncService.deleteBlob(blobId);
+        db.syncStatus.set(blobId, SyncStatus.PendingDelete);
+      }
+    } catch {
+      // Server delete failed — mark as pending for retry
+      for (const blobId of allBlobIds) {
+        db.syncStatus.set(blobId, SyncStatus.PendingDelete);
+      }
+    }
+  } else {
+    for (const blobId of allBlobIds) {
+      db.syncStatus.set(blobId, SyncStatus.PendingDelete);
+    }
   }
 
   return { id: input.id, deleted: true };

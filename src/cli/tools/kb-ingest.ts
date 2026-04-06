@@ -18,7 +18,7 @@ export async function handleKbIngest(
   input: KbIngestInput,
   deps: McpDependencies,
 ): Promise<KbIngestResult> {
-  const { db, pipeline, encryption, keys } = deps;
+  const { db, pipeline, encryption, keys, syncService } = deps;
 
   // 1. Fetch and extract content from URL
   const extracted = await pipeline.fetchAndExtract(input.url);
@@ -43,9 +43,10 @@ export async function handleKbIngest(
     chunkCount: embeddedChunks.length,
     chunkIds: chunkBlobIds,
   };
-  encryption.encrypt(sourcePayload, keys, 'CEK');
+  const sourceEncrypted = encryption.encrypt(sourcePayload, keys, 'CEK');
 
   // 6. Encrypt each chunk payload
+  const chunkEncrypted: Array<{ blobId: string; bytes: Uint8Array }> = [];
   for (let i = 0; i < embeddedChunks.length; i++) {
     const ec = embeddedChunks[i];
     const chunkPayload: ChunkPayload = {
@@ -57,7 +58,8 @@ export async function handleKbIngest(
       tokenCount: ec.tokenCount,
       embedding: Array.from(ec.embedding),
     };
-    encryption.encrypt(chunkPayload, keys, 'CEK');
+    const result = encryption.encrypt(chunkPayload, keys, 'CEK');
+    chunkEncrypted.push({ blobId: chunkBlobIds[i], bytes: result.bytes });
   }
 
   // 7. Store source record in database
@@ -90,9 +92,25 @@ export async function handleKbIngest(
     })),
   );
 
-  // 10. Set sync status to local_only for all blobs
-  for (const blobId of allBlobIds) {
-    db.syncStatus.set(blobId, 'local_only' as SyncStatus);
+  // 10. Upload encrypted blobs to sync server (if sync is enabled)
+  if (syncService) {
+    try {
+      await syncService.upload(sourceId, sourceEncrypted.bytes);
+      db.syncStatus.set(sourceId, 'synced' as SyncStatus);
+      for (const chunk of chunkEncrypted) {
+        await syncService.upload(chunk.blobId, chunk.bytes);
+        db.syncStatus.set(chunk.blobId, 'synced' as SyncStatus);
+      }
+    } catch {
+      // Upload failed — mark as local_only for retry later
+      for (const blobId of allBlobIds) {
+        db.syncStatus.set(blobId, 'local_only' as SyncStatus);
+      }
+    }
+  } else {
+    for (const blobId of allBlobIds) {
+      db.syncStatus.set(blobId, 'local_only' as SyncStatus);
+    }
   }
 
   return {

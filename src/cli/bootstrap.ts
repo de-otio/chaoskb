@@ -336,6 +336,11 @@ async function attemptSyncRegistration(
         return { enabled: false, pending: false, endpoint };
       }
 
+      // Already registered — treat as success (key is known to the server)
+      if ((body as Record<string, unknown>).error === 'already_registered' || response.status === 409) {
+        return { enabled: true, pending: false, endpoint };
+      }
+
       // Other server errors — mark as pending for retry
       return { enabled: false, pending: true, endpoint };
     }

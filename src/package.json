@@ -38,7 +38,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "test:e2e": "node __e2e__/native-modules.mjs && node __e2e__/crypto-pipeline.mjs && node __e2e__/database-layer.mjs && node __e2e__/mcp-startup.mjs"
+    "test:e2e": "node __e2e__/native-modules.mjs && node __e2e__/crypto-pipeline.mjs && node __e2e__/database-layer.mjs && node __e2e__/mcp-startup.mjs",
+    "test:e2e:sync": "node __e2e__/sync-flow.mjs"
   },
   "publishConfig": {
     "access": "public"

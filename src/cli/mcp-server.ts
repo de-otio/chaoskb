@@ -7,6 +7,7 @@ import {
 import type { IDatabase, IDatabaseManager } from '../storage/types.js';
 import type { IContentPipeline } from '../pipeline/types.js';
 import type { IEncryptionService, DerivedKeySet } from '../crypto/types.js';
+import type { ISyncService } from '../sync/types.js';
 import { handleKbIngest } from './tools/kb-ingest.js';
 import { handleKbQuery } from './tools/kb-query.js';
 import { handleKbList } from './tools/kb-list.js';
@@ -32,6 +33,8 @@ export interface McpDependencies {
   pipeline: IContentPipeline;
   encryption: IEncryptionService;
   keys: DerivedKeySet;
+  /** Optional sync service — present when sync is enabled. */
+  syncService?: ISyncService;
 }
 
 const TOOL_DEFINITIONS = [
@@ -577,7 +580,23 @@ async function initializeDependencies(
     embedder,
   );
 
-  return { db, dbManager, pipeline, encryption, keys };
+  // 6. Initialize sync service if sync is enabled
+  let syncService: ISyncService | undefined;
+  if (config.syncEnabled && config.endpoint) {
+    try {
+      const { SyncService } = await import('../sync/sync-service.js');
+      syncService = new SyncService(
+        { endpoint: config.endpoint, sshKeyPath: config.sshKeyPath },
+        db,
+        encryption,
+        keys,
+      );
+    } catch {
+      process.stderr.write('[ChaosKB] Warning: failed to initialize sync service.\n');
+    }
+  }
+
+  return { db, dbManager, pipeline, encryption, keys, syncService };
 }
 
 /**
