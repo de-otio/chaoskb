@@ -401,11 +401,13 @@ async function uploadWrappedMasterKey(
 
     // Sign the wrapped blob for integrity verification
     const { SSHSigner } = await import('../sync/ssh-signer.js');
+    const { SequenceCounter } = await import('../sync/sequence.js');
     const signer = new SSHSigner(ssh.keyPath ?? undefined);
+    const seq = new SequenceCounter();
     const { authorization, timestamp, sequence, publicKey } = await signer.signRequest(
       'PUT',
       '/v1/wrapped-key',
-      1,
+      seq.next(),
       wrappedBlob,
     );
 
@@ -439,11 +441,13 @@ async function restoreMasterKey(
   if (!ssh.publicKey) return;
 
   const { SSHSigner } = await import('../sync/ssh-signer.js');
+  const { SequenceCounter } = await import('../sync/sequence.js');
   const signer = new SSHSigner(ssh.keyPath ?? undefined);
+  const seq = new SequenceCounter();
   const { authorization, timestamp, sequence, publicKey } = await signer.signRequest(
     'GET',
     '/v1/wrapped-key',
-    1,
+    seq.next(),
   );
 
   const response = await fetchWithTimeout(`${endpoint}/v1/wrapped-key`, {

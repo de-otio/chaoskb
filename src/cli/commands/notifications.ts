@@ -23,11 +23,12 @@ async function createSyncClient(): Promise<{
   const sshKeyPath = config.sshKeyPath ?? path.join(os.homedir(), '.ssh', 'id_ed25519');
 
   const { SSHSigner } = await import('../../sync/ssh-signer.js');
+  const { SequenceCounter } = await import('../../sync/sequence.js');
   const signer = new SSHSigner(sshKeyPath);
-  let sequence = 1;
+  const sequence = new SequenceCounter();
 
   const signedFetch = async (method: string, urlPath: string, body?: Uint8Array): Promise<Response> => {
-    const seq = sequence++;
+    const seq = sequence.next();
     const result = await signer.signRequest(method, urlPath, seq, body);
 
     const headers: Record<string, string> = {

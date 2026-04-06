@@ -291,15 +291,16 @@ async function pollForWrappedKey(
   endpoint: string,
   signer: SSHSigner,
 ): Promise<Uint8Array | null> {
+  const { SequenceCounter } = await import('../../sync/sequence.js');
+  const sequence = new SequenceCounter();
   const deadline = Date.now() + 5 * 60 * 1000;
-  let sequence = 1;
 
   while (Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 5000));
 
     try {
       const urlPath = '/v1/wrapped-key';
-      const result = await signer.signRequest('GET', urlPath, sequence++);
+      const result = await signer.signRequest('GET', urlPath, sequence.next());
 
       const resp = await fetch(`${endpoint}${urlPath}`, {
         method: 'GET',
