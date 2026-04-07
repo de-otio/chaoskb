@@ -7,13 +7,12 @@ describe('shouldStartMcpServer', () => {
   });
 
   it('returns true when stdin is not TTY and only flag-style args', () => {
-    // Only flag-style args (starting with -) don't trigger CLI mode
     expect(shouldStartMcpServer(false, ['--project'])).toBe(true);
   });
 
-  it('returns false when stdin is not TTY and --project has a value arg', () => {
-    // The value 'myproject' looks like a command (no leading -), so CLI mode
-    expect(shouldStartMcpServer(false, ['--project', 'myproject'])).toBe(false);
+  it('returns true when stdin is not TTY and --project has a value arg', () => {
+    // --project consumes the next arg as its value, not as a CLI command
+    expect(shouldStartMcpServer(false, ['--project', 'myproject'])).toBe(true);
   });
 
   it('returns false when stdin is not TTY but a command arg is present', () => {

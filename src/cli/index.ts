@@ -27,14 +27,25 @@ import { kbCreateCommand, kbListCommand, kbDeleteCommand } from './commands/kb.j
 const require = createRequire(import.meta.url);
 const pkg = require('../../package.json') as { version: string };
 
+/** Global options that consume the next argument as a value. */
+const OPTIONS_WITH_VALUE = new Set(['--project']);
+
 /**
  * Determine whether to start MCP server mode based on TTY status and arguments.
  * MCP mode is used when stdin is piped (non-TTY) and no explicit CLI command or
  * info flag (--version, --help) is present.
  */
 export function shouldStartMcpServer(isTTY: boolean, args: string[]): boolean {
-  const hasCommand = args.some(arg => !arg.startsWith('-'));
   const hasFlag = args.some(arg => arg === '--version' || arg === '-V' || arg === '--help' || arg === '-h');
+  let hasCommand = false;
+  for (let i = 0; i < args.length; i++) {
+    if (OPTIONS_WITH_VALUE.has(args[i])) {
+      i++; // skip the value that follows
+    } else if (!args[i].startsWith('-')) {
+      hasCommand = true;
+      break;
+    }
+  }
   return !isTTY && !hasCommand && !hasFlag;
 }
 
