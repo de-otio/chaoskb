@@ -1,9 +1,9 @@
 import type BetterSqlite3 from 'better-sqlite3';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, renameSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 export const CREATE_TABLES_SQL: string[] = [
   `CREATE TABLE IF NOT EXISTS sources (
@@ -137,6 +137,10 @@ export function migrateSchema(db: BetterSqlite3.Database): void {
     runMigrationV3(db);
   }
 
+  if (currentVersion < 4) {
+    runMigrationV4(db);
+  }
+
   db.prepare('UPDATE schema_version SET version = ?').run(SCHEMA_VERSION);
 }
 
@@ -231,6 +235,7 @@ function importFlatFileData(db: BetterSqlite3.Database): void {
       if (!isNaN(value) && value > 0) {
         db.prepare('UPDATE sync_sequence SET value = ? WHERE id = 1').run(value);
       }
+      try { renameSync(seqPath, seqPath + '.migrated'); } catch { /* already renamed */ }
     } catch { /* ignore read errors */ }
   }
 
@@ -252,6 +257,7 @@ function importFlatFileData(db: BetterSqlite3.Database): void {
         const data = item.data ? Buffer.from(item.data, 'base64') : null;
         insertStmt.run(item.blobId, data, item.retryCount, item.error ?? null);
       }
+      try { renameSync(queuePath, queuePath + '.migrated'); } catch { /* already renamed */ }
     } catch { /* ignore parse errors */ }
   }
 
@@ -266,6 +272,25 @@ function importFlatFileData(db: BetterSqlite3.Database): void {
           insertStmt.run(key, String(value));
         }
       }
+      try { renameSync(statePath, statePath + '.migrated'); } catch { /* already renamed */ }
     } catch { /* ignore parse errors */ }
   }
+}
+
+/**
+ * Migration v4: Reset stale sync queue items.
+ *
+ * After fixing WAF body size blocking and sequence counter drift,
+ * previously failed/retried items need a fresh attempt.
+ */
+function runMigrationV4(db: BetterSqlite3.Database): void {
+  db.exec(`
+    UPDATE sync_queue
+    SET status = 'pending',
+        retry_count = 0,
+        error_message = NULL,
+        next_attempt = NULL
+    WHERE status IN ('pending', 'failed')
+      AND retry_count > 0
+  `);
 }

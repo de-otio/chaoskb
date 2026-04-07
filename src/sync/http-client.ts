@@ -57,7 +57,12 @@ export class SyncHttpClient implements ISyncHttpClient {
     return this.request('POST', path, body);
   }
 
-  private async request(method: string, path: string, body?: Uint8Array): Promise<Response> {
+  private async request(
+    method: string,
+    path: string,
+    body?: Uint8Array,
+    isRetry = false,
+  ): Promise<Response> {
     const seq = this.sequence.next();
     const result = await this.signer.signRequest(method, path, seq, body);
 
@@ -97,6 +102,12 @@ export class SyncHttpClient implements ISyncHttpClient {
     }
 
     if (response.status === 401) {
+      const text = await response.text();
+      if (text.includes('Replay detected') && !isRetry) {
+        // Sequence counter is behind server's highestSeq — bump ahead and retry
+        for (let i = 0; i < 100; i++) this.sequence.next();
+        return this.request(method, path, body, true);
+      }
       throw new Error('Authentication failed: invalid or expired SSH signature');
     }
 

@@ -31,7 +31,7 @@ function createMockResponse(status: number, body?: unknown, headers?: Record<str
     headers: responseHeaders,
     json: vi.fn().mockResolvedValue(body),
     arrayBuffer: vi.fn().mockResolvedValue(new ArrayBuffer(0)),
-    text: vi.fn().mockResolvedValue(JSON.stringify(body)),
+    text: vi.fn().mockResolvedValue(body !== undefined ? JSON.stringify(body) : ''),
   } as unknown as Response;
 }
 

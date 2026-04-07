@@ -4,28 +4,26 @@ import type { SyncConfig } from './types.js';
 import type { ISyncSequenceRepository } from '../storage/types.js';
 import { SSHSigner } from './ssh-signer.js';
 import { SyncHttpClient } from './http-client.js';
-import { SequenceCounter } from './sequence.js';
 
 /**
  * Create a SyncHttpClient from explicit config.
  *
- * Uses a file-based SequenceCounter by default. For MCP server context
- * (where ISyncSequenceRepository is available from the DB), pass it
- * as the sequence parameter.
+ * Requires a DB-backed ISyncSequenceRepository to prevent
+ * sequence counter drift between SQLite and legacy flat files.
  */
 export function createSyncHttpClientFromConfig(
   config: SyncConfig,
-  sequence?: ISyncSequenceRepository,
+  sequence: ISyncSequenceRepository,
 ): SyncHttpClient {
   const signer = new SSHSigner(config.sshKeyPath);
-  return new SyncHttpClient(config, signer, sequence ?? new SequenceCounter());
+  return new SyncHttpClient(config, signer, sequence);
 }
 
 /**
  * Create a SyncHttpClient by loading config from disk.
  *
- * For use in CLI commands and MCP tool handlers that don't have
- * access to the database's ISyncSequenceRepository.
+ * Opens the personal database to use the SQLite-backed sequence counter,
+ * ensuring all code paths share the same counter and avoiding drift.
  */
 export async function createSyncHttpClient(): Promise<{
   client: SyncHttpClient;
@@ -42,6 +40,10 @@ export async function createSyncHttpClient(): Promise<{
   const sshKeyPath = config.sshKeyPath ?? join(homedir(), '.ssh', 'id_ed25519');
   const syncConfig: SyncConfig = { endpoint, sshKeyPath };
 
-  const client = createSyncHttpClientFromConfig(syncConfig);
+  const { DatabaseManager } = await import('../storage/database-manager.js');
+  const dbManager = new DatabaseManager();
+  const db = dbManager.getPersonalDb();
+
+  const client = createSyncHttpClientFromConfig(syncConfig, db.syncSequence);
   return { client, config: syncConfig };
 }

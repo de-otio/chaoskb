@@ -400,10 +400,12 @@ async function uploadWrappedMasterKey(
     const wrappedBlob = wrapMasterKey(secureMasterKey, keyInfo);
 
     const { createSyncHttpClientFromConfig } = await import('../sync/client-factory.js');
+    const { DatabaseManager } = await import('../storage/database-manager.js');
+    const db = new DatabaseManager().getPersonalDb();
     const client = createSyncHttpClientFromConfig({
       endpoint,
       sshKeyPath: ssh.keyPath ?? undefined,
-    });
+    }, db.syncSequence);
 
     await client.put('/v1/wrapped-key', wrappedBlob);
   } finally {
@@ -425,10 +427,12 @@ async function restoreMasterKey(
   if (!ssh.publicKey) return;
 
   const { createSyncHttpClientFromConfig } = await import('../sync/client-factory.js');
+  const { DatabaseManager } = await import('../storage/database-manager.js');
+  const db = new DatabaseManager().getPersonalDb();
   const client = createSyncHttpClientFromConfig({
     endpoint,
     sshKeyPath: ssh.keyPath ?? undefined,
-  });
+  }, db.syncSequence);
 
   const response = await client.get('/v1/wrapped-key');
 

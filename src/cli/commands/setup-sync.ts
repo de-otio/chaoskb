@@ -292,7 +292,9 @@ async function pollForWrappedKey(
   sshKeyPath: string,
 ): Promise<Uint8Array | null> {
   const { createSyncHttpClientFromConfig } = await import('../../sync/client-factory.js');
-  const client = createSyncHttpClientFromConfig({ endpoint, sshKeyPath });
+  const { DatabaseManager } = await import('../../storage/database-manager.js');
+  const db = new DatabaseManager().getPersonalDb();
+  const client = createSyncHttpClientFromConfig({ endpoint, sshKeyPath }, db.syncSequence);
   const deadline = Date.now() + 5 * 60 * 1000;
 
   while (Date.now() < deadline) {

@@ -107,12 +107,14 @@ export async function rotateKeyCommand(newKeyPath?: string, options?: { dryRun?:
 
     // Call POST /v1/rotate-start with the old key for auth
     const { createSyncHttpClientFromConfig } = await import('../../sync/client-factory.js');
+    const { DatabaseManager } = await import('../../storage/database-manager.js');
+    const db = new DatabaseManager().getPersonalDb();
 
     const endpoint = config.endpoint.replace(/\/+$/, '');
     const oldClient = createSyncHttpClientFromConfig({
       endpoint,
       sshKeyPath: config.sshKeyPath ?? undefined,
-    });
+    }, db.syncSequence);
 
     const body = JSON.stringify({ newPublicKey: newPublicKeyBase64, wrappedBlob: wrappedBlobBase64 });
     const bodyBytes = new TextEncoder().encode(body);
@@ -130,7 +132,7 @@ export async function rotateKeyCommand(newKeyPath?: string, options?: { dryRun?:
     const newClient = createSyncHttpClientFromConfig({
       endpoint,
       sshKeyPath: newKeyInfo.keyPath,
-    });
+    }, db.syncSequence);
 
     const uploadResponse = await newClient.put('/v1/wrapped-key', wrappedBlob);
 
