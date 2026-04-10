@@ -17,6 +17,7 @@ function createMockDeps(): McpDependencies {
     sources: {
       insert: vi.fn(),
       getById: vi.fn(),
+      getByUrl: vi.fn().mockReturnValue(null),
       list: vi.fn().mockReturnValue([]),
       count: vi.fn().mockReturnValue(0),
       softDelete: vi.fn().mockReturnValue(true),
@@ -59,6 +60,12 @@ function createMockDeps(): McpDependencies {
       content: 'Test content',
       url: 'https://example.com',
       byteLength: 12,
+    }),
+    extractFromFile: vi.fn().mockResolvedValue({
+      title: 'Test File',
+      content: 'Test file content',
+      url: '/tmp/test.pdf',
+      byteLength: 17,
     }),
     chunk: vi.fn().mockReturnValue([{
       content: 'Test content',

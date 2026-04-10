@@ -39,6 +39,7 @@ export class SourceRepository implements ISourceRepository {
 
   private readonly insertStmt: BetterSqlite3.Statement;
   private readonly getByIdStmt: BetterSqlite3.Statement;
+  private readonly getByUrlStmt: BetterSqlite3.Statement;
   private readonly softDeleteStmt: BetterSqlite3.Statement;
   private readonly restoreStmt: BetterSqlite3.Statement;
   private readonly updateLastAccessedStmt: BetterSqlite3.Statement;
@@ -52,6 +53,10 @@ export class SourceRepository implements ISourceRepository {
     `);
 
     this.getByIdStmt = db.prepare('SELECT * FROM sources WHERE id = ?');
+
+    this.getByUrlStmt = db.prepare(
+      'SELECT * FROM sources WHERE url = ? AND deleted_at IS NULL LIMIT 1',
+    );
 
     this.softDeleteStmt = db.prepare(
       `UPDATE sources SET deleted_at = datetime('now'), updated_at = datetime('now') WHERE id = ? AND deleted_at IS NULL`,
@@ -83,6 +88,11 @@ export class SourceRepository implements ISourceRepository {
 
   getById(id: string): SourceRecord | null {
     const row = this.getByIdStmt.get(id) as SourceRow | undefined;
+    return row ? rowToRecord(row) : null;
+  }
+
+  getByUrl(url: string): SourceRecord | null {
+    const row = this.getByUrlStmt.get(url) as SourceRow | undefined;
     return row ? rowToRecord(row) : null;
   }
 
@@ -157,8 +167,9 @@ export class SourceRepository implements ISourceRepository {
     }
 
     if (filter?.titleSearch) {
-      conditions.push('title LIKE ?');
-      params.push(`%${filter.titleSearch}%`);
+      conditions.push("title LIKE ? ESCAPE '\\'");
+      const escaped = filter.titleSearch.replace(/[%_\\]/g, '\\$&');
+      params.push(`%${escaped}%`);
     }
 
     let sql = `${selectClause} FROM sources`;

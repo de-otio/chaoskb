@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Sign In</title>
+</head>
+<body>
+  <div class="login-container">
+    <h1>Sign in to your account</h1>
+    <form action="/auth/login" method="POST">
+      <label for="email">Email address</label>
+      <input type="email" id="email" name="email" />
+      <label for="password">Password</label>
+      <input type="password" id="password" name="password" />
+      <button type="submit">Log in</button>
+      <a href="/forgot-password">Forgot your password?</a>
+      <p>Don't have an account? <a href="/signup">Sign up</a></p>
+    </form>
+  </div>
+</body>
+</html>

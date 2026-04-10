@@ -12,6 +12,8 @@ export interface PipelineConfig {
   maxRedirects: number;
   /** User-Agent header */
   userAgent: string;
+  /** Skip SSRF validation — ONLY for tests against localhost servers */
+  _skipSsrfCheck?: boolean;
 }
 
 /** Extracted content from a URL */
@@ -22,6 +24,8 @@ export interface ExtractedContent {
   url: string;
   /** Byte length of extracted content */
   byteLength: number;
+  /** Validation warnings (content was stored, but quality may be degraded) */
+  warnings?: string[];
 }
 
 /** A text chunk from extracted content */
@@ -66,6 +70,8 @@ export type DownloadProgressCallback = (downloaded: number, total: number) => vo
 export interface IContentPipeline {
   /** Fetch and extract content from a URL */
   fetchAndExtract(url: string): Promise<ExtractedContent>;
+  /** Extract content from a local file (PDF, DOCX, PPTX, HTML, TXT, MD) */
+  extractFromFile(filePath: string): Promise<ExtractedContent>;
   /** Split extracted text into chunks */
   chunk(text: string): Chunk[];
   /** Embed a single text string */

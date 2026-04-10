@@ -1,0 +1,12 @@
+Functional Programming Fundamentals
+
+Functional programming emphasizes immutability, pure functions, and declarative code.
+Instead of mutating state and writing step-by-step instructions, functional programs
+describe transformations on data.
+
+Languages like Haskell, Clojure, and Elm embrace this paradigm fully, while languages
+like JavaScript, Python, and Rust incorporate functional features alongside other paradigms.
+
+Common functional patterns include map, filter, and reduce for transforming collections;
+higher-order functions that accept or return other functions; and pattern matching for
+handling different data shapes.

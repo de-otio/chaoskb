@@ -2,7 +2,8 @@ import type { McpDependencies } from '../mcp-server.js';
 import type { SourcePayload, ChunkPayload } from '../../crypto/types.js';
 
 export interface KbIngestInput {
-  url: string;
+  url?: string;
+  filePath?: string;
   tags?: string[];
 }
 
@@ -11,6 +12,7 @@ export interface KbIngestResult {
   url: string;
   chunkCount: number;
   blobIds: string[];
+  warnings?: string[];
 }
 
 export async function handleKbIngest(
@@ -18,9 +20,56 @@ export async function handleKbIngest(
   deps: McpDependencies,
 ): Promise<KbIngestResult> {
   const { db, pipeline, encryption, keys } = deps;
+  const ingestWarnings: string[] = [];
 
-  // 1. Fetch and extract content from URL
-  const extracted = await pipeline.fetchAndExtract(input.url);
+  // Validate: exactly one of url or filePath
+  if (!input.url && !input.filePath) {
+    throw new Error('Either url or filePath must be provided.');
+  }
+  if (input.url && input.filePath) {
+    throw new Error('Provide either url or filePath, not both.');
+  }
+
+  const sourceIdentifier = (input.url ?? input.filePath)!;
+
+  // 0. Check for duplicate source (warn but don't block)
+  const existing = db.sources.getByUrl(sourceIdentifier);
+  if (existing) {
+    ingestWarnings.push(
+      `[duplicate-source] This source was already ingested on ${existing.createdAt} (source: ${existing.id}). ` +
+      'Ingesting again creates a duplicate entry.',
+    );
+  }
+
+  // 1. Extract content (dispatch based on input type)
+  let extracted;
+  try {
+    extracted = input.filePath
+      ? await pipeline.extractFromFile(input.filePath)
+      : await pipeline.fetchAndExtract(input.url!);
+  } catch (error: unknown) {
+    if (input.url && error instanceof Error) {
+      const msg = error.message;
+      const isBotBlock =
+        msg.includes('anti-bot') ||
+        msg.includes('CAPTCHA') ||
+        msg.includes('JavaScript to render') ||
+        msg.includes('Access Denied') ||
+        msg.includes('bot-detection');
+      if (isBotBlock) {
+        throw new Error(
+          msg +
+          '\n\nTip: Save the page as PDF in your browser (Print → Save as PDF), ' +
+          'then ingest the file using the filepath instead of the url.',
+        );
+      }
+    }
+    throw error;
+  }
+
+  if (extracted.warnings) {
+    ingestWarnings.push(...extracted.warnings);
+  }
 
   // 2. Chunk the extracted text
   const chunks = pipeline.chunk(extracted.content);
@@ -36,7 +85,7 @@ export async function handleKbIngest(
   // 5. Encrypt source payload
   const sourcePayload: SourcePayload = {
     type: 'source',
-    url: input.url,
+    url: sourceIdentifier,
     title: extracted.title,
     tags: input.tags,
     chunkCount: embeddedChunks.length,
@@ -64,7 +113,7 @@ export async function handleKbIngest(
   // 7. Store source record in database
   db.sources.insert({
     id: sourceId,
-    url: input.url,
+    url: sourceIdentifier,
     title: extracted.title,
     tags: input.tags ?? [],
     chunkCount: embeddedChunks.length,
@@ -99,8 +148,9 @@ export async function handleKbIngest(
 
   return {
     title: extracted.title,
-    url: input.url,
+    url: sourceIdentifier,
     chunkCount: embeddedChunks.length,
     blobIds: allBlobIds,
+    ...(ingestWarnings.length > 0 ? { warnings: ingestWarnings } : {}),
   };
 }

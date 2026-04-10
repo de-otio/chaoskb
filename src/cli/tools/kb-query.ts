@@ -1,5 +1,13 @@
 import type { McpDependencies } from '../mcp-server.js';
 
+/**
+ * Wrap a chunk's content with source attribution delimiters.
+ * This makes trust boundaries visible per-chunk when content is served to an AI agent.
+ */
+function wrapChunkContent(content: string, title: string, url: string): string {
+  return `[Source: "${title}" from ${url} — UNTRUSTED CONTENT]\n${content}\n[/Source]`;
+}
+
 export interface KbQueryInput {
   query: string;
   limit?: number;
@@ -13,6 +21,8 @@ export interface KbQueryResultItem {
   content: string;
   score: number;
   chunkIndex: number;
+  /** Timestamp when the source was ingested */
+  ingestedAt: string;
 }
 
 export interface KbQueryResult {
@@ -69,9 +79,10 @@ async function semanticSearch(
       sourceId: match.sourceId,
       title: source.title,
       url: source.url,
-      content: chunk.content,
+      content: wrapChunkContent(chunk.content, source.title, source.url),
       score: match.score,
       chunkIndex: match.chunkIndex,
+      ingestedAt: source.createdAt,
     });
   }
 
@@ -98,9 +109,10 @@ async function keywordSearch(
       sourceId: match.sourceId,
       title: source.title,
       url: source.url,
-      content: match.snippet,
+      content: wrapChunkContent(match.snippet, source.title, source.url),
       score: -match.rank, // FTS5 rank is negative (lower = better), flip for consistency
       chunkIndex: match.chunkIndex,
+      ingestedAt: source.createdAt,
     });
   }
 

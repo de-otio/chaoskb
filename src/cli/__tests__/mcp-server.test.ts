@@ -10,6 +10,7 @@ function createMockDeps(): McpDependencies {
     sources: {
       insert: vi.fn(),
       getById: vi.fn(),
+      getByUrl: vi.fn().mockReturnValue(null),
       list: vi.fn().mockReturnValue([]),
       count: vi.fn().mockReturnValue(0),
       softDelete: vi.fn().mockReturnValue(true),
@@ -74,6 +75,12 @@ function createMockDeps(): McpDependencies {
       url: 'https://example.com',
       byteLength: 12,
     }),
+    extractFromFile: vi.fn().mockResolvedValue({
+      title: 'Test File',
+      content: 'Test file content',
+      url: '/tmp/test.pdf',
+      byteLength: 17,
+    }),
     chunk: vi.fn().mockReturnValue([]),
     embed: vi.fn().mockResolvedValue(new Float32Array(384)),
     embedChunks: vi.fn().mockResolvedValue([]),
@@ -113,8 +120,8 @@ describe('MCP Server', () => {
     it('should include kb_ingest tool with correct schema', () => {
       const tool = TOOL_DEFINITIONS.find((t) => t.name === 'kb_ingest');
       expect(tool).toBeDefined();
-      expect(tool!.inputSchema.required).toContain('url');
       expect(tool!.inputSchema.properties).toHaveProperty('url');
+      expect(tool!.inputSchema.properties).toHaveProperty('filePath');
       expect(tool!.inputSchema.properties).toHaveProperty('tags');
     });
 

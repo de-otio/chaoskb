@@ -1,6 +1,14 @@
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, it, expect, vi } from 'vitest';
 import { ContentPipeline } from '../content-pipeline.js';
 import type { Chunk, EmbeddingVector } from '../types.js';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const FIXTURES_DIR = join(__dirname, 'fixtures');
+function fixture(name: string): string {
+  return join(FIXTURES_DIR, name);
+}
 
 /** Create a mock Embedder with controllable embed/embedBatch. */
 function createMockEmbedder() {
@@ -93,5 +101,62 @@ describe('ContentPipeline', () => {
 
     expect(embedder.embed).toHaveBeenCalledWith('test text');
     expect(vec).toBeInstanceOf(Float32Array);
+  });
+
+  describe('extractFromFile', () => {
+    it('extracts content from a text file', async () => {
+      const embedder = createMockEmbedder();
+      const pipeline = new ContentPipeline({}, embedder as never);
+      const result = await pipeline.extractFromFile(fixture('sample.txt'));
+      expect(result.content).toContain('Functional programming');
+      expect(result.title).toBe('Functional Programming Fundamentals');
+    });
+
+    it('extracts content from a PDF file', async () => {
+      const embedder = createMockEmbedder();
+      const pipeline = new ContentPipeline({}, embedder as never);
+      const result = await pipeline.extractFromFile(fixture('sample.pdf'));
+      expect(result.content).toContain('Climate');
+    });
+
+    it('throws on unsupported format', async () => {
+      const embedder = createMockEmbedder();
+      const pipeline = new ContentPipeline({}, embedder as never);
+      await expect(pipeline.extractFromFile('/path/to/file.xyz')).rejects.toThrow(
+        'Unsupported file format',
+      );
+    });
+
+    it('does not attach warnings for healthy content', async () => {
+      const embedder = createMockEmbedder();
+      const pipeline = new ContentPipeline({}, embedder as never);
+      const result = await pipeline.extractFromFile(fixture('sample.txt'));
+      expect(result.warnings).toBeUndefined();
+    });
+
+    it('throws validation error for thin content files', async () => {
+      const { writeFileSync } = await import('node:fs');
+      const { tmpdir } = await import('node:os');
+      const { join } = await import('node:path');
+      const tmpFile = join(tmpdir(), 'chaoskb-thin.txt');
+      writeFileSync(tmpFile, 'Tiny.');
+      const embedder = createMockEmbedder();
+      const pipeline = new ContentPipeline({}, embedder as never);
+      await expect(pipeline.extractFromFile(tmpFile)).rejects.toThrow('too short');
+    });
+
+    it('attaches warnings for short content files', async () => {
+      const { writeFileSync } = await import('node:fs');
+      const { tmpdir } = await import('node:os');
+      const { join } = await import('node:path');
+      const tmpFile = join(tmpdir(), 'chaoskb-short.txt');
+      // 100 chars — above thin (50) but below short threshold (200)
+      writeFileSync(tmpFile, 'A'.repeat(100));
+      const embedder = createMockEmbedder();
+      const pipeline = new ContentPipeline({}, embedder as never);
+      const result = await pipeline.extractFromFile(tmpFile);
+      expect(result.warnings).toBeDefined();
+      expect(result.warnings!.some((w) => w.includes('short-content'))).toBe(true);
+    });
   });
 });

@@ -68,6 +68,7 @@ export interface DatabaseConfig {
 export interface ISourceRepository {
   insert(source: Omit<SourceRecord, 'createdAt' | 'updatedAt' | 'lastAccessedAt'>): SourceRecord;
   getById(id: string): SourceRecord | null;
+  getByUrl(url: string): SourceRecord | null;
   list(filter?: SourceFilter, pagination?: PaginationOptions): SourceRecord[];
   count(filter?: SourceFilter): number;
   softDelete(id: string): boolean;

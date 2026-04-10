@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { AddressInfo } from 'node:net';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { fetchUrl } from '../fetch.js';
+import { fetchUrl, validateUrl, MAX_RESPONSE_BYTES } from '../fetch.js';
 
 let server: Server;
 let baseUrl: string;
@@ -74,6 +74,17 @@ function createHandler() {
       return;
     }
 
+    if (url === '/large') {
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      // Send 11 MB of content (exceeds 10 MB limit)
+      const chunk = '<p>' + 'x'.repeat(1024 * 1024) + '</p>';
+      for (let i = 0; i < 11; i++) {
+        res.write(chunk);
+      }
+      res.end();
+      return;
+    }
+
     res.writeHead(404);
     res.end();
   };
@@ -94,60 +105,64 @@ afterAll(async () => {
   });
 });
 
+/** Config that skips SSRF check for localhost test server */
+const LOCAL = { _skipSsrfCheck: true } as const;
+
 describe('fetchUrl', () => {
   it('fetches HTML content successfully', async () => {
-    const result = await fetchUrl(`${baseUrl}/ok`);
+    const result = await fetchUrl(`${baseUrl}/ok`, LOCAL);
     expect(result.html).toContain('Hello World');
     expect(result.contentType).toContain('text/html');
     expect(result.finalUrl).toBe(`${baseUrl}/ok`);
   });
 
   it('follows redirects', async () => {
-    const result = await fetchUrl(`${baseUrl}/redirect`);
+    const result = await fetchUrl(`${baseUrl}/redirect`, LOCAL);
     expect(result.html).toContain('Hello World');
     expect(result.finalUrl).toBe(`${baseUrl}/ok`);
   });
 
   it('follows multiple redirects', async () => {
-    const result = await fetchUrl(`${baseUrl}/double-redirect`);
+    const result = await fetchUrl(`${baseUrl}/double-redirect`, LOCAL);
     expect(result.html).toContain('Hello World');
     expect(result.finalUrl).toBe(`${baseUrl}/ok`);
   });
 
   it('throws on 404', async () => {
-    await expect(fetchUrl(`${baseUrl}/not-found`)).rejects.toThrow('HTTP 404 Client Error');
+    await expect(fetchUrl(`${baseUrl}/not-found`, LOCAL)).rejects.toThrow('HTTP 404 Client Error');
   });
 
   it('throws on 500', async () => {
-    await expect(fetchUrl(`${baseUrl}/server-error`)).rejects.toThrow('HTTP 500 Server Error');
+    await expect(fetchUrl(`${baseUrl}/server-error`, LOCAL)).rejects.toThrow('HTTP 500 Server Error');
   });
 
   it('rejects non-HTML content (JSON)', async () => {
-    await expect(fetchUrl(`${baseUrl}/json`)).rejects.toThrow('Non-HTML content type');
+    await expect(fetchUrl(`${baseUrl}/json`, LOCAL)).rejects.toThrow('Non-HTML content type');
   });
 
   it('rejects non-HTML content (PDF)', async () => {
-    await expect(fetchUrl(`${baseUrl}/pdf`)).rejects.toThrow('Non-HTML content type');
+    await expect(fetchUrl(`${baseUrl}/pdf`, LOCAL)).rejects.toThrow('Non-HTML content type');
   });
 
   it('accepts XHTML content', async () => {
-    const result = await fetchUrl(`${baseUrl}/xhtml`);
+    const result = await fetchUrl(`${baseUrl}/xhtml`, LOCAL);
     expect(result.html).toContain('XHTML content');
   });
 
   it('times out on slow responses', async () => {
     await expect(
-      fetchUrl(`${baseUrl}/slow`, { fetchTimeoutMs: 200 }),
+      fetchUrl(`${baseUrl}/slow`, { ...LOCAL, fetchTimeoutMs: 200 }),
     ).rejects.toThrow('timed out');
   });
 
   it('sends correct User-Agent header', async () => {
-    const result = await fetchUrl(`${baseUrl}/check-ua`);
+    const result = await fetchUrl(`${baseUrl}/check-ua`, LOCAL);
     expect(result.html).toContain('ChaosKB/0.1');
   });
 
   it('uses custom User-Agent when configured', async () => {
     const result = await fetchUrl(`${baseUrl}/check-ua`, {
+      ...LOCAL,
       userAgent: 'CustomBot/2.0',
     });
     expect(result.html).toContain('CustomBot/2.0');
@@ -159,8 +174,104 @@ describe('fetchUrl', () => {
     ).rejects.toThrow();
   });
 
-  it('throws on connection refused', async () => {
-    // Port 1 is very unlikely to have a server
-    await expect(fetchUrl('http://127.0.0.1:1/page')).rejects.toThrow();
+  it('blocks localhost by default (SSRF protection)', async () => {
+    await expect(fetchUrl(`${baseUrl}/ok`)).rejects.toThrow(/private/);
+  });
+
+  it('rejects responses exceeding the size limit', async () => {
+    await expect(fetchUrl(`${baseUrl}/large`, LOCAL)).rejects.toThrow(/exceeds.*MB limit/);
+  });
+});
+
+describe('validateUrl (SSRF protection)', () => {
+  it('rejects file:// URLs', async () => {
+    await expect(validateUrl('file:///etc/passwd')).rejects.toThrow(/not allowed/);
+  });
+
+  it('rejects ftp:// URLs', async () => {
+    await expect(validateUrl('ftp://example.com/file')).rejects.toThrow(/not allowed/);
+  });
+
+  it('rejects data: URLs', async () => {
+    await expect(validateUrl('data:text/html,<h1>hi</h1>')).rejects.toThrow(/not allowed/);
+  });
+
+  it('rejects localhost IP', async () => {
+    await expect(validateUrl('http://127.0.0.1/')).rejects.toThrow(/private/);
+  });
+
+  it('rejects 127.x.x.x range', async () => {
+    await expect(validateUrl('http://127.0.0.2:8080/')).rejects.toThrow(/private/);
+  });
+
+  it('rejects 10.x.x.x private range', async () => {
+    await expect(validateUrl('http://10.0.0.1/')).rejects.toThrow(/private/);
+  });
+
+  it('rejects 172.16.x.x private range', async () => {
+    await expect(validateUrl('http://172.16.0.1/')).rejects.toThrow(/private/);
+  });
+
+  it('rejects 192.168.x.x private range', async () => {
+    await expect(validateUrl('http://192.168.1.1/')).rejects.toThrow(/private/);
+  });
+
+  it('rejects AWS metadata endpoint IP', async () => {
+    await expect(validateUrl('http://169.254.169.254/latest/meta-data/')).rejects.toThrow(/private/);
+  });
+
+  it('rejects IPv6 loopback', async () => {
+    await expect(validateUrl('http://[::1]/')).rejects.toThrow(/private/);
+  });
+
+  it('rejects Google cloud metadata hostname', async () => {
+    await expect(validateUrl('http://metadata.google.internal/')).rejects.toThrow(/cloud metadata/);
+  });
+
+  it('rejects 0.0.0.0', async () => {
+    await expect(validateUrl('http://0.0.0.0/')).rejects.toThrow(/private/);
+  });
+
+  it('rejects IPv6 unspecified address', async () => {
+    await expect(validateUrl('http://[::]/'))
+      .rejects.toThrow(/private/);
+  });
+
+  it('rejects IPv6 ULA (fc00::/7)', async () => {
+    await expect(validateUrl('http://[fc00::1]/')).rejects.toThrow(/private/);
+    await expect(validateUrl('http://[fd12::1]/')).rejects.toThrow(/private/);
+  });
+
+  it('rejects IPv6 link-local (fe80::)', async () => {
+    await expect(validateUrl('http://[fe80::1]/')).rejects.toThrow(/private/);
+  });
+
+  it('rejects IPv4-mapped IPv6 private address', async () => {
+    await expect(validateUrl('http://[::ffff:127.0.0.1]/')).rejects.toThrow(/private/);
+    await expect(validateUrl('http://[::ffff:10.0.0.1]/')).rejects.toThrow(/private/);
+  });
+
+  it('allows a public IPv6 address', async () => {
+    // 2001:4860:4860::8888 is Google Public DNS
+    await expect(validateUrl('http://[2001:4860:4860::8888]/')).resolves.toBeUndefined();
+  });
+
+  it('allows a public IPv4 address', async () => {
+    // 8.8.8.8 is Google DNS — a known public IP
+    await expect(validateUrl('http://8.8.8.8/')).resolves.toBeUndefined();
+  });
+
+  it('rejects hostname that resolves to localhost', async () => {
+    // "localhost" resolves to 127.0.0.1 or ::1
+    await expect(validateUrl('http://localhost/')).rejects.toThrow(/private/);
+  });
+
+  it('allows public URLs', async () => {
+    // Should not throw for a well-known public domain
+    await expect(validateUrl('https://example.com/')).resolves.toBeUndefined();
+  });
+
+  it('rejects invalid URLs', async () => {
+    await expect(validateUrl('not-a-url')).rejects.toThrow(/Invalid URL/);
   });
 });

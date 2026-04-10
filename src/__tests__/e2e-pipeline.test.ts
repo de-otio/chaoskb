@@ -156,7 +156,7 @@ describe('End-to-end pipeline', () => {
     db = new KBDatabase({ path: path.join(tmpDir, 'test.db') });
 
     const embedder = createDeterministicEmbedder();
-    const pipeline = new ContentPipeline({}, embedder as never);
+    const pipeline = new ContentPipeline({ _skipSsrfCheck: true }, embedder as never);
     const encryption = createMockEncryption();
     const keys = encryption.deriveKeys(encryption.generateMasterKey());
 
