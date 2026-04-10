@@ -104,8 +104,6 @@ async function extractPdf(filePath: string): Promise<ExtractedContent> {
   const uint8 = new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
 
   const parser = new PDFParse({ data: uint8, isEvalSupported: false });
-  await parser.load();
-
   const textResult = await parser.getText();
   // Strip the page footer markers ("-- N of M --")
   const rawText = textResult.text.replace(/\n-- \d+ of \d+ --\n/g, '\n');

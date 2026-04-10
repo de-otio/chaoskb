@@ -113,7 +113,7 @@ export async function validateUrl(url: string): Promise<void> {
   }
 
   // Resolve hostname and check all resulting IPs
-  let addresses: dns.LookupAddress[];
+  let addresses: { address: string; family: number }[];
   try {
     addresses = await dns.lookup(hostname, { all: true });
   } catch {
