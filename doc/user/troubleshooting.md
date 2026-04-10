@@ -68,10 +68,12 @@ Your synced storage quota is full. New articles still save and search locally â€
 **Common causes:**
 - The URL is behind a paywall or login wall (ChaosKB fetches as an anonymous visitor)
 - The site blocks automated requests
-- The URL returns non-HTML content (PDF, image, etc.)
+- The content is an unsupported format (images, video, etc.)
 - Network connectivity issue
 
 **Fix:** Try the URL in your browser. If it loads, the site may be blocking non-browser requests. There is no workaround for paywalled content.
+
+For local files, use the `filePath` parameter instead of `url`. ChaosKB supports PDF, DOCX, PPTX, HTML, TXT, and MD files.
 
 ## Data looks corrupted
 
@@ -86,4 +88,4 @@ This is rare. Possible causes: interrupted upload, bit flip in transit, server s
 
 ## Need more help?
 
-Report issues at https://github.com/<org>/chaoskb/issues
+Report issues at https://github.com/de-otio/chaoskb/issues

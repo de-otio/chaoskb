@@ -62,7 +62,7 @@ The agent routes to the correct KB based on context. If both your personal KB an
 
 > "Search acme-api for our API rate limits"
 
-All the same tools are available — `kb_ingest`, `kb_query`, `kb_list`, `kb_delete`, `kb_summary` — scoped to whichever KB the agent calls.
+All the same knowledge base tools are available — `kb_ingest`, `kb_query`, `kb_list`, `kb_delete`, `kb_summary` — scoped to whichever KB the agent calls. For shared project KBs, `kb_query_shared` provides results with attribution (who added the article). See the [MCP Tools Reference](mcp-tools.md) for full details.
 
 ## Cross-project search
 
@@ -70,7 +70,7 @@ To search across all your knowledge bases at once:
 
 > "Search all my knowledge bases for articles about encryption"
 
-The agent can call `kb_query` with `--all` to search across your personal KB and all project KBs simultaneously.
+When the agent calls `kb_query` without specifying a `kb` parameter, it searches across your personal KB and all project KBs simultaneously, merging results by relevance score.
 
 ## Managing project KBs
 

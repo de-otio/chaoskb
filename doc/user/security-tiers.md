@@ -46,10 +46,18 @@ Your encryption key is derived from a passphrase you choose (minimum 5 words or 
 
 ## Adding a new device
 
+On your existing device, ask your agent to generate a link code:
+
+> "I want to add a new device to ChaosKB"
+
+This calls `device_link_start` and returns a short-lived link code. On the new device, confirm the link:
+
+> "Link this device with code ABC123"
+
 | Tier | How to add a device |
 |------|-------------------|
-| Standard | Scan a QR code from your existing device |
-| Enhanced | Scan a QR code from your existing device |
+| Standard | Generate a link code on existing device, confirm on new device |
+| Enhanced | Generate a link code on existing device, confirm on new device |
 | Maximum | Enter your passphrase on the new device |
 
 ## Changing tiers

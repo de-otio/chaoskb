@@ -60,7 +60,7 @@ ChaosKB includes a free sync plan (50 MB, ~925 articles) for backup and multi-de
 chaoskb-mcp setup sync
 ```
 
-This registers your SSH public key with the hosted service. Authentication is automatic (Ed25519 via ssh-agent or `~/.ssh/id_ed25519`). No email or password needed.
+This registers your SSH public key with the hosted service. Authentication is automatic via ssh-agent or key file (`~/.ssh/id_ed25519`, `~/.ssh/id_rsa`, etc.). Ed25519, RSA, and ECDSA keys are all supported. No email or password needed.
 
 Once configured, articles sync in the background after every ingest. You can also [deploy your own server](../admin/deploy.md) instead.
 
