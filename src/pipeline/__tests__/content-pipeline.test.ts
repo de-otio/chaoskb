@@ -1,8 +1,21 @@
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { describe, it, expect, vi } from 'vitest';
-import { ContentPipeline } from '../content-pipeline.js';
+import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 import type { Chunk, EmbeddingVector } from '../types.js';
+
+const fetchUrlMock = vi.fn();
+const fetchUrlWithBrowserMock = vi.fn();
+
+vi.mock('../fetch.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../fetch.js')>();
+  return { ...actual, fetchUrl: fetchUrlMock };
+});
+
+vi.mock('../fetch-browser.js', () => ({
+  fetchUrlWithBrowser: fetchUrlWithBrowserMock,
+}));
+
+const { ContentPipeline } = await import('../content-pipeline.js');
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const FIXTURES_DIR = join(__dirname, 'fixtures');
@@ -157,6 +170,90 @@ describe('ContentPipeline', () => {
       const result = await pipeline.extractFromFile(tmpFile);
       expect(result.warnings).toBeDefined();
       expect(result.warnings!.some((w) => w.includes('short-content'))).toBe(true);
+    });
+  });
+
+  describe('fetchAndExtract JS-render fallback', () => {
+    const spaHtml = `
+      <html><head><title>SPA</title></head>
+      <body>
+        <noscript>Please enable JavaScript to view this site.</noscript>
+        <div id="root"></div>
+        <script src="/bundle.js"></script>
+      </body></html>
+    `;
+
+    const renderedHtml = `
+      <html><head><title>Rendered Page</title></head>
+      <body><article>
+        <h1>Rendered Page</h1>
+        <p>${'This is the post-render article body. '.repeat(30)}</p>
+      </article></body></html>
+    `;
+
+    beforeEach(() => {
+      fetchUrlMock.mockReset();
+      fetchUrlWithBrowserMock.mockReset();
+    });
+
+    afterEach(() => {
+      fetchUrlMock.mockReset();
+      fetchUrlWithBrowserMock.mockReset();
+    });
+
+    it('falls back to browser render when raw HTML is a JS-only shell', async () => {
+      fetchUrlMock.mockResolvedValue({
+        html: spaHtml,
+        finalUrl: 'https://example.com/spa',
+        contentType: 'text/html',
+      });
+      fetchUrlWithBrowserMock.mockResolvedValue(renderedHtml);
+
+      const embedder = createMockEmbedder();
+      const pipeline = new ContentPipeline(
+        { _skipSafetyCheck: true } as never,
+        embedder as never,
+      );
+      const result = await pipeline.fetchAndExtract('https://example.com/spa');
+
+      expect(fetchUrlWithBrowserMock).toHaveBeenCalledWith('https://example.com/spa');
+      expect(result.content).toContain('post-render article body');
+    });
+
+    it('does not invoke browser fallback for normal article pages', async () => {
+      fetchUrlMock.mockResolvedValue({
+        html: renderedHtml,
+        finalUrl: 'https://example.com/article',
+        contentType: 'text/html',
+      });
+
+      const embedder = createMockEmbedder();
+      const pipeline = new ContentPipeline(
+        { _skipSafetyCheck: true } as never,
+        embedder as never,
+      );
+      await pipeline.fetchAndExtract('https://example.com/article');
+
+      expect(fetchUrlWithBrowserMock).not.toHaveBeenCalled();
+    });
+
+    it('propagates JsRenderRequiredError if render still yields an SPA shell', async () => {
+      fetchUrlMock.mockResolvedValue({
+        html: spaHtml,
+        finalUrl: 'https://example.com/spa',
+        contentType: 'text/html',
+      });
+      // Simulated: the headless render returns another SPA shell.
+      fetchUrlWithBrowserMock.mockResolvedValue(spaHtml);
+
+      const embedder = createMockEmbedder();
+      const pipeline = new ContentPipeline(
+        { _skipSafetyCheck: true } as never,
+        embedder as never,
+      );
+      await expect(
+        pipeline.fetchAndExtract('https://example.com/spa'),
+      ).rejects.toThrow(/require JavaScript/);
     });
   });
 });

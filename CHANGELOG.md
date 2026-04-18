@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **JS-rendered page fallback.** `kb_ingest` now transparently renders client-side SPAs (React, Vue, Angular, Next.js, etc.) via a headless Chromium instance instead of returning "no extractable content". Playwright Library is bundled as a regular dependency; Chromium downloads during `npm install`. The browser is launched lazily on the first JS-rendered URL, reused across sequential ingestions, and self-closes after 60 s idle.
+- Typed `JsRenderRequiredError` in `src/pipeline/extract.ts` replaces the ad-hoc string-only throws from the two SPA-detection sites. `content-pipeline.ts::fetchAndExtract` catches it and invokes `fetchUrlWithBrowser`.
+- `fetchUrlWithBrowser(url)` in `src/pipeline/fetch-browser.ts`: re-runs SSRF validation before launching Chromium, uses `networkidle` with a `domcontentloaded` fallback, enforces the existing 10 MB size cap on rendered HTML, and closes each `BrowserContext` in `finally` so cookies/cache don't leak between calls.
+
+### Security
+- SSRF protections (scheme, blocklist, DNS→private-IP) re-run before every Playwright navigation — the headless browser does not bypass `validateUrl`.
+
 ## [0.3.6] - 2026-04-12
 
 ### Fixed

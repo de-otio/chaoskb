@@ -11,6 +11,20 @@ import { parseHTML } from 'linkedom';
 import type { ExtractedContent } from './types.js';
 
 /**
+ * Thrown when a page appears to require client-side JavaScript to render
+ * its content. Callers can catch this to invoke a headless-browser fallback.
+ */
+export class JsRenderRequiredError extends Error {
+  constructor(public readonly url: string) {
+    super(
+      `This page appears to require JavaScript to render its content (${url}). ` +
+      `Only the noscript fallback was captured.`,
+    );
+    this.name = 'JsRenderRequiredError';
+  }
+}
+
+/**
  * Regex matching inline `style` attribute values that visually hide an element.
  *
  * These patterns detect CSS-based hiding tricks that attackers use to embed
@@ -77,10 +91,7 @@ export function extractContent(html: string, url: string): ExtractedContent {
   // SPA pages have <noscript> as their only meaningful content; once we strip it
   // below, there's nothing left to extract and we'd get a confusing error.
   if (looksLikeSpaHtml(html)) {
-    throw new Error(
-      `This page appears to require JavaScript to render its content (${safeSourceLabel(url)}). ` +
-      `Only the noscript fallback was captured. ChaosKB does not yet support JavaScript-rendered pages.`,
-    );
+    throw new JsRenderRequiredError(safeSourceLabel(url));
   }
 
   const { document } = parseHTML(html);
@@ -134,10 +145,7 @@ export function extractContent(html: string, url: string): ExtractedContent {
 
   // Detect JavaScript-only SPA pages that didn't render
   if (looksLikeJsOnlyPage(html, content)) {
-    throw new Error(
-      `This page appears to require JavaScript to render its content (${safeSourceLabel(url)}). ` +
-      `Only the noscript fallback was captured. ChaosKB does not yet support JavaScript-rendered pages.`,
-    );
+    throw new JsRenderRequiredError(safeSourceLabel(url));
   }
 
   const byteLength = Buffer.byteLength(content, 'utf-8');

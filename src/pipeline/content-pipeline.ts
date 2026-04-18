@@ -1,8 +1,9 @@
 import { chunkText } from './chunker.js';
 import type { Embedder } from './embedder.js';
-import { extractContent } from './extract.js';
+import { extractContent, JsRenderRequiredError } from './extract.js';
 import { extractFromFile as fileExtract } from './file-extract.js';
 import { fetchUrl } from './fetch.js';
+import { fetchUrlWithBrowser } from './fetch-browser.js';
 import { safetyChecker } from './safety.js';
 import { searchEmbeddings } from './search.js';
 import { validateContent, validateFileContent } from './validate.js';
@@ -40,9 +41,23 @@ export class ContentPipeline implements IContentPipeline {
     }
 
     const result = await fetchUrl(url, this.config);
-    const extracted = extractContent(result.html, result.finalUrl);
 
-    const issues = validateContent(result.html, extracted);
+    let html = result.html;
+    let extracted: ExtractedContent;
+    try {
+      extracted = extractContent(html, result.finalUrl);
+    } catch (err) {
+      if (err instanceof JsRenderRequiredError) {
+        // JavaScript-rendered page: re-fetch through headless Chromium and
+        // run the same extraction pipeline on the post-render HTML.
+        html = await fetchUrlWithBrowser(result.finalUrl);
+        extracted = extractContent(html, result.finalUrl);
+      } else {
+        throw err;
+      }
+    }
+
+    const issues = validateContent(html, extracted);
 
     const errors = issues.filter((i) => i.severity === 'error');
     if (errors.length > 0) {

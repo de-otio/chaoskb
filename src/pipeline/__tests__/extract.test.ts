@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { extractContent } from '../extract.js';
+import { extractContent, JsRenderRequiredError } from '../extract.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const FIXTURES_DIR = join(__dirname, 'fixtures');
@@ -126,6 +126,20 @@ describe('extractContent', () => {
       `;
       const result = extractContent(html, 'https://example.com/guide');
       expect(result.content).toContain('tutorial');
+    });
+
+    it('throws JsRenderRequiredError (typed) on SPA shell', () => {
+      const html = `
+        <html><head><title>My App</title></head>
+        <body>
+          <noscript>Please enable JavaScript to view this site.</noscript>
+          <div id="app"></div>
+          <script src="/bundle.js"></script>
+        </body></html>
+      `;
+      expect(() => extractContent(html, 'https://example.com/spa')).toThrow(
+        JsRenderRequiredError,
+      );
     });
 
     it('throws on Next.js-style SPA with empty __next div', () => {
