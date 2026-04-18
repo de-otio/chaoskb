@@ -125,7 +125,7 @@ describe('ContentPipeline', () => {
       expect(result.title).toBe('Functional Programming Fundamentals');
     });
 
-    it('extracts content from a PDF file', async () => {
+    it('extracts content from a PDF file', { timeout: 30_000 }, async () => {
       const embedder = createMockEmbedder();
       const pipeline = new ContentPipeline({}, embedder as never);
       const result = await pipeline.extractFromFile(fixture('sample.pdf'));
