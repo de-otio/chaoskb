@@ -1,11 +1,25 @@
 import * as fs from 'node:fs';
+import * as os from 'node:os';
 import * as readline from 'node:readline';
-import { randomBytes } from 'node:crypto';
+import * as path from 'node:path';
+import {
+  KeyRing,
+  StandardTier,
+  MaximumTier,
+  OsKeychainStorage,
+  FileSystemStorage,
+  type KeyStorage,
+  type WrappedKey,
+} from '@de-otio/keyring';
 import { loadConfig, saveConfig, CHAOSKB_DIR } from './setup.js';
 import { SecurityTier } from '../../crypto/types.js';
-import * as path from 'node:path';
+import { KEYRING_SERVICE, FILE_KEY_PATH } from '../bootstrap.js';
 
-const TIER_ORDER: SecurityTier[] = [SecurityTier.Standard, SecurityTier.Enhanced, SecurityTier.Maximum];
+const TIER_ORDER: SecurityTier[] = [
+  SecurityTier.Standard,
+  SecurityTier.Enhanced,
+  SecurityTier.Maximum,
+];
 
 function tierIndex(tier: string): number {
   return TIER_ORDER.indexOf(tier as SecurityTier);
@@ -19,16 +33,44 @@ function prompt(rl: readline.Interface, question: string): Promise<string> {
   });
 }
 
+function buildStorage<K extends 'standard' | 'maximum'>(kind: K): KeyStorage<K> {
+  if (process.env.CHAOSKB_KEY_STORAGE === 'file') {
+    const fsDir = path.join(CHAOSKB_DIR, 'keyring');
+    fs.mkdirSync(fsDir, { recursive: true, mode: 0o700 });
+    return new FileSystemStorage<K>({
+      root: fsDir,
+      acceptedTiers: [kind] as const,
+    }) as KeyStorage<K>;
+  }
+  return new OsKeychainStorage<K>({
+    service: KEYRING_SERVICE,
+    acceptedTiers: [kind] as const,
+  });
+}
+
+function resolveSshKeyPath(configSshKeyPath?: string): string | null {
+  if (configSshKeyPath && fs.existsSync(configSshKeyPath)) return configSshKeyPath;
+  const sshDir = path.join(os.homedir(), '.ssh');
+  for (const c of ['id_ed25519', 'id_rsa']) {
+    const p = path.join(sshDir, c);
+    if (fs.existsSync(p) && fs.existsSync(`${p}.pub`)) return p;
+  }
+  return null;
+}
+
 /**
  * Upgrade security tier.
  *
- * Standard → Maximum: re-wrap master key under Argon2id-derived key from passphrase.
- * Enhanced → Maximum: same as above, with note that mnemonic is invalidated.
+ * Standard → Maximum: unlock master via the current Standard tier,
+ * then re-wrap under a passphrase-derived KEK via keyring's `MaximumTier`.
  *
- * Note: The Enhanced tier (BIP39 mnemonic) is deprecated. New upgrades only
- * support "maximum". Existing Enhanced-tier users can still upgrade to Maximum.
+ * Note: The Enhanced tier (BIP39 mnemonic) is deprecated. New upgrades
+ * only support "maximum".
  */
-export async function upgradeTierCommand(tier: string, options?: { dryRun?: boolean }): Promise<void> {
+export async function upgradeTierCommand(
+  tier: string,
+  options?: { dryRun?: boolean },
+): Promise<void> {
   const dryRun = options?.dryRun ?? false;
   // Validate tier argument — only 'maximum' is accepted for new upgrades
   if (tier !== 'maximum') {
@@ -57,102 +99,43 @@ export async function upgradeTierCommand(tier: string, options?: { dryRun?: bool
     return;
   }
 
-  // Retrieve master key from OS keyring
-  const { KeyringService } = await import('../../crypto/keyring.js');
-  const keyring = new KeyringService();
-  let masterKey = await keyring.retrieve('chaoskb', 'master-key');
+  // Locate and unlock the current master key via StandardTier.
+  const sshKeyPath = resolveSshKeyPath(config.sshKeyPath);
+  if (!sshKeyPath) {
+    console.error('Master key not found. Ensure your OS keyring is accessible.');
+    process.exitCode = 1;
+    return;
+  }
 
-  if (!masterKey) {
-    // Try file-based key fallback
-    if (process.env.CHAOSKB_KEY_STORAGE === 'file') {
-      const { FILE_KEY_PATH } = await import('../bootstrap.js');
-      try {
-        const hex = fs.readFileSync(FILE_KEY_PATH, 'utf-8').trim();
-        const { SecureBuffer } = await import('../../crypto/secure-buffer.js');
-        masterKey = SecureBuffer.from(Buffer.from(hex, 'hex'));
-      } catch {
-        // Fall through to error
-      }
-    }
-    if (!masterKey) {
-      console.error('Master key not found. Ensure your OS keyring is accessible.');
-      process.exitCode = 1;
-      return;
-    }
+  const standardStorage = buildStorage<'standard'>('standard');
+  const currentWrapped: WrappedKey | null = await standardStorage.get('__personal');
+  if (!currentWrapped) {
+    console.error('Master key not found. Ensure your OS keyring is accessible.');
+    process.exitCode = 1;
+    return;
   }
 
   if (dryRun) {
-    console.log('[dry-run] Would upgrade security tier from "%s" to "%s".', config.securityTier, tier);
+    console.log(
+      '[dry-run] Would upgrade security tier from "%s" to "%s".',
+      config.securityTier,
+      tier,
+    );
     console.log('[dry-run] This will:');
     console.log('[dry-run]   - Derive a wrapping key from your passphrase using Argon2id');
     console.log('[dry-run]   - Encrypt the master key with the wrapping key');
     console.log('[dry-run]   - Write encrypted key blob to ~/.chaoskb/master-key.enc');
     console.log('[dry-run]   - Remove the master key from the OS keyring');
     console.log('[dry-run] No changes made.');
-    masterKey.dispose();
     return;
   }
 
-  try {
-    await upgradeToMaximum(masterKey, config);
-  } finally {
-    masterKey.dispose();
-  }
-}
-
-async function _upgradeToEnhanced(
-  masterKey: import('../../crypto/types.js').ISecureBuffer,
-  config: { securityTier: string; projects: Array<{ name: string; createdAt: string }> },
-): Promise<void> {
-  const { generateRecoveryKey } = await import('../../crypto/tiers/enhanced.js');
-
-  const mnemonic = generateRecoveryKey(masterKey);
-  const words = mnemonic.split(' ');
-
-  console.log('');
-  console.log('Your 24-word recovery key:');
-  console.log('');
-  // Display in 3 columns of 8
-  for (let i = 0; i < 24; i += 3) {
-    const cols = [];
-    for (let j = 0; j < 3 && i + j < 24; j++) {
-      cols.push(`  ${String(i + j + 1).padStart(2, ' ')}. ${words[i + j].padEnd(10)}`);
-    }
-    console.log(cols.join(''));
-  }
-  console.log('');
-  console.log('Write these words down and store them safely.');
-  console.log('This is your backup recovery factor. Do NOT store it digitally.');
-  console.log('');
-
-  // Spot-check: ask user to confirm 2 random words
-  const indices = pickRandomIndices(24, 2);
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  try {
-    for (const idx of indices) {
-      const answer = await prompt(rl, `Confirm word #${idx + 1}: `);
-      if (answer.toLowerCase() !== words[idx].toLowerCase()) {
-        console.error(`Incorrect. Expected word #${idx + 1} to be "${words[idx]}".`);
-        console.error('Tier upgrade cancelled.');
-        process.exitCode = 1;
-        return;
-      }
-    }
-  } finally {
-    rl.close();
-  }
-
-  // Update config
-  config.securityTier = SecurityTier.Enhanced;
-  await saveConfig(config);
-
-  console.log('');
-  console.log('Security tier upgraded to Enhanced.');
-  console.log('Your master key remains in the OS keyring. The recovery key is your backup.');
+  await upgradeToMaximum(sshKeyPath, currentWrapped, config);
 }
 
 async function upgradeToMaximum(
-  masterKey: import('../../crypto/types.js').ISecureBuffer,
+  sshKeyPath: string,
+  currentWrapped: WrappedKey,
   config: { securityTier: string; projects: Array<{ name: string; createdAt: string }> },
 ): Promise<void> {
   if (!process.stdin.isTTY) {
@@ -190,64 +173,41 @@ async function upgradeToMaximum(
 
   console.log('Deriving key with Argon2id (this may take a moment)...');
 
-  // Generate salt and derive wrapping key
-  const salt = randomBytes(16);
-  const { argon2Derive } = await import('../../crypto/index.js');
-  const wrappingKey = argon2Derive(passphrase, salt);
-
+  // 1. Unlock the current master via StandardTier + stored wrapped blob.
+  const sshPublicKeyLine = fs.readFileSync(`${sshKeyPath}.pub`, 'utf-8').trim();
+  const sshPrivateKeyPem = fs.readFileSync(sshKeyPath, 'utf-8');
+  const standardStorage = buildStorage<'standard'>('standard');
+  const standardTier = StandardTier.fromSshKey(sshPublicKeyLine);
+  const ring = new KeyRing({ tier: standardTier, storage: standardStorage });
   try {
-    // Encrypt master key with wrapping key using XChaCha20-Poly1305
-    const { aeadEncrypt } = await import('../../crypto/aead.js');
-    const aad = Buffer.from('chaoskb-master-key-wrap-v1');
-    const result = aeadEncrypt(
-      wrappingKey.buffer,
-      masterKey.buffer,
-      aad,
+    await ring.unlockWithSshKey(sshPrivateKeyPem);
+  } catch (err) {
+    console.error(
+      `Failed to unlock master key: ${err instanceof Error ? err.message : String(err)}`,
     );
+    process.exitCode = 1;
+    return;
+  }
 
-    // Write encrypted key blob
-    const blob = {
-      v: 1,
-      kdf: 'argon2id',
-      t: 3,
-      m: 65536,
-      p: 1,
-      salt: Buffer.from(salt).toString('hex'),
-      nonce: Buffer.from(result.nonce).toString('hex'),
-      ciphertext: Buffer.from(new Uint8Array([...result.ciphertext, ...result.tag])).toString('hex'),
-    };
+  // 2. Wrap the master with MaximumTier under the new passphrase.
+  try {
+    const maxTier = MaximumTier.fromPassphrase(passphrase);
+    const maxWrapped = await ring.withMaster(async (master) => maxTier.wrap(master));
 
+    // Persist to a dedicated storage (filesystem-backed blob file for
+    // compatibility with the previous Maximum-tier layout at
+    // ~/.chaoskb/master-key.enc).
     const blobPath = path.join(CHAOSKB_DIR, 'master-key.enc');
-    // Write new protection BEFORE removing old
-    fs.writeFileSync(blobPath, JSON.stringify(blob, null, 2), { mode: 0o600 });
+    const serialisedBlob = serialiseWrappedKey(maxWrapped);
+    fs.writeFileSync(blobPath, serialisedBlob, { mode: 0o600 });
 
-    // Round-trip verification: decrypt the blob we just wrote to ensure it's valid
-    const { aeadDecrypt } = await import('../../crypto/aead.js');
-    try {
-      const verifyNonce = new Uint8Array(Buffer.from(blob.nonce, 'hex'));
-      const verifyCt = Buffer.from(blob.ciphertext, 'hex');
-      const verifyCiphertext = new Uint8Array(verifyCt.subarray(0, verifyCt.length - 16));
-      const verifyTag = new Uint8Array(verifyCt.subarray(verifyCt.length - 16));
-      const recovered = aeadDecrypt(wrappingKey.buffer, verifyNonce, verifyCiphertext, verifyTag, aad);
-      if (!Buffer.from(recovered).equals(masterKey.buffer)) {
-        throw new Error('Round-trip verification failed: decrypted key does not match original');
-      }
-    } catch (err) {
-      // Verification failed — remove the corrupt blob and abort
-      try { fs.unlinkSync(blobPath); } catch { /* ignore */ }
-      throw new Error(
-        `Key encryption verification failed. Keyring entry NOT removed. ` +
-        `Error: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
+    // Verify-after-write: round-trip decrypt the blob we just wrote.
+    await verifyRoundTrip(blobPath, passphrase);
 
-    // Verification passed — safe to remove master key from OS keyring
-    const { KeyringService } = await import('../../crypto/keyring.js');
-    const keyring = new KeyringService();
-    await keyring.delete('chaoskb', 'master-key');
+    // Verification passed — safe to clear the StandardTier wrapping.
+    await ring.delete();
 
-    // Also remove file-based key if it exists
-    const { FILE_KEY_PATH } = await import('../bootstrap.js');
+    // Also remove file-based key if it exists (legacy pre-migration state).
     try {
       fs.unlinkSync(FILE_KEY_PATH);
     } catch {
@@ -263,14 +223,101 @@ async function upgradeToMaximum(
     console.log(`Encrypted key written to ${blobPath}`);
     console.log('Your passphrase is now your only recovery factor.');
   } finally {
-    wrappingKey.dispose();
+    await ring.lock();
+    // We do our best to forget `currentWrapped` by not retaining a
+    // reference past this scope.
+    void currentWrapped;
   }
 }
 
-function pickRandomIndices(max: number, count: number): number[] {
-  const indices = new Set<number>();
-  while (indices.size < count) {
-    indices.add(Math.floor(Math.random() * max));
+/**
+ * Serialise a keyring `WrappedKey` to the chaoskb `master-key.enc` file.
+ * Uses a JSON schema compatible with keyring's internal serialiser so
+ * both halves of the migration can read it — matches the shape written
+ * by keyring's own filesystem storage.
+ */
+function serialiseWrappedKey(w: WrappedKey): string {
+  const out: Record<string, unknown> = {
+    v: w.v,
+    tier: w.tier,
+    envelope: Buffer.from(w.envelope).toString('base64'),
+    ts: w.ts,
+  };
+  if (w.kdfParams) {
+    if (w.kdfParams.algorithm === 'argon2id') {
+      out.kdfParams = {
+        algorithm: 'argon2id',
+        t: w.kdfParams.t,
+        m: w.kdfParams.m,
+        p: w.kdfParams.p,
+        salt: Buffer.from(w.kdfParams.salt).toString('base64'),
+      };
+    } else {
+      out.kdfParams = {
+        algorithm: 'pbkdf2-sha256',
+        iterations: w.kdfParams.iterations,
+        salt: Buffer.from(w.kdfParams.salt).toString('base64'),
+      };
+    }
   }
-  return [...indices].sort((a, b) => a - b);
+  return JSON.stringify(out, null, 2);
+}
+
+/** Parse the serialised form back into a WrappedKey. */
+export function parseWrappedKey(json: string): WrappedKey {
+  const parsed = JSON.parse(json) as {
+    v: number;
+    tier: string;
+    envelope: string;
+    kdfParams?: {
+      algorithm: string;
+      t?: number;
+      m?: number;
+      p?: number;
+      iterations?: number;
+      salt: string;
+    };
+    sshFingerprint?: string;
+    ts: string;
+  };
+  if (parsed.v !== 1) throw new Error(`unsupported wrapped-key wire version: ${parsed.v}`);
+  if (parsed.tier !== 'standard' && parsed.tier !== 'maximum') {
+    throw new Error(`unsupported tier kind: ${parsed.tier}`);
+  }
+  const out: WrappedKey = {
+    v: 1,
+    tier: parsed.tier,
+    envelope: new Uint8Array(Buffer.from(parsed.envelope, 'base64')),
+    ts: parsed.ts,
+  };
+  if (parsed.kdfParams) {
+    const saltBytes = new Uint8Array(Buffer.from(parsed.kdfParams.salt, 'base64'));
+    if (parsed.kdfParams.algorithm === 'argon2id') {
+      out.kdfParams = {
+        algorithm: 'argon2id',
+        t: parsed.kdfParams.t ?? 0,
+        m: parsed.kdfParams.m ?? 0,
+        p: parsed.kdfParams.p ?? 0,
+        salt: saltBytes,
+      };
+    } else if (parsed.kdfParams.algorithm === 'pbkdf2-sha256') {
+      out.kdfParams = {
+        algorithm: 'pbkdf2-sha256',
+        iterations: parsed.kdfParams.iterations ?? 0,
+        salt: saltBytes,
+      };
+    }
+  }
+  if (parsed.sshFingerprint) out.sshFingerprint = parsed.sshFingerprint;
+  return out;
+}
+
+async function verifyRoundTrip(blobPath: string, passphrase: string): Promise<void> {
+  const json = fs.readFileSync(blobPath, 'utf-8');
+  const wrapped = parseWrappedKey(json);
+  // Construct a temporary MaximumTier (its passphrase is only used for
+  // wrap; unwrap reads the passphrase from UnlockInput).
+  const tier = MaximumTier.fromPassphrase(passphrase);
+  const master = await tier.unwrap(wrapped, { kind: 'passphrase', passphrase });
+  master.dispose();
 }

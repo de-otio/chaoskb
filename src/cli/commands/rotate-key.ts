@@ -1,7 +1,16 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
+import {
+  KeyRing,
+  StandardTier,
+  OsKeychainStorage,
+  FileSystemStorage,
+  parseSshPublicKey,
+  type KeyStorage,
+} from '@de-otio/keyring';
 import { loadConfig, saveConfig } from './setup.js';
+import { KEYRING_SERVICE, CHAOSKB_DIR, FILE_KEY_PATH } from '../bootstrap.js';
 
 /**
  * CLI command: chaoskb-mcp config rotate-key --new-key <path>
@@ -9,13 +18,16 @@ import { loadConfig, saveConfig } from './setup.js';
  * Performs Phase 1 of two-phase key rotation:
  * 1. Reads current config to get endpoint and current key fingerprint
  * 2. Detects the new SSH key from --new-key path (or auto-detects)
- * 3. Retrieves master key from keyring
- * 4. Re-wraps master key with the new SSH public key
+ * 3. Unlocks the master key from the existing keyring using the old SSH key
+ * 4. Re-wraps the master key with the new SSH public key (StandardTier wrap)
  * 5. Calls POST /v1/rotate-start with { newPublicKey, wrappedBlob }
  * 6. Uploads new wrapped blob to /v1/wrapped-key
- * 7. Updates config with new key fingerprint and keyPath
+ * 7. Updates local keyring storage with the new wrapping and updates config
  */
-export async function rotateKeyCommand(newKeyPath?: string, options?: { dryRun?: boolean }): Promise<void> {
+export async function rotateKeyCommand(
+  newKeyPath?: string,
+  options?: { dryRun?: boolean },
+): Promise<void> {
   const dryRun = options?.dryRun ?? false;
   const config = await loadConfig();
   if (!config) {
@@ -41,7 +53,7 @@ export async function rotateKeyCommand(newKeyPath?: string, options?: { dryRun?:
   if (!newKeyInfo) {
     console.error(
       'Could not detect a new SSH key.' +
-      (newKeyPath ? ` File not found: ${newKeyPath}` : ' Specify --new-key <path>.'),
+        (newKeyPath ? ` File not found: ${newKeyPath}` : ' Specify --new-key <path>.'),
     );
     process.exitCode = 1;
     return;
@@ -54,30 +66,6 @@ export async function rotateKeyCommand(newKeyPath?: string, options?: { dryRun?:
     return;
   }
 
-  // Retrieve master key from OS keyring
-  const { KeyringService } = await import('../../crypto/keyring.js');
-  const keyring = new KeyringService();
-  let masterKey = await keyring.retrieve('chaoskb', 'master-key');
-
-  if (!masterKey) {
-    // Try file-based key fallback
-    if (process.env.CHAOSKB_KEY_STORAGE === 'file') {
-      const { FILE_KEY_PATH } = await import('../bootstrap.js');
-      try {
-        const hex = fs.readFileSync(FILE_KEY_PATH, 'utf-8').trim();
-        const { SecureBuffer } = await import('../../crypto/secure-buffer.js');
-        masterKey = SecureBuffer.from(Buffer.from(hex, 'hex'));
-      } catch {
-        // Fall through to error
-      }
-    }
-    if (!masterKey) {
-      console.error('Master key not found. Ensure your OS keyring is accessible.');
-      process.exitCode = 1;
-      return;
-    }
-  }
-
   if (dryRun) {
     console.log('[dry-run] Would rotate SSH key for sync.');
     console.log('[dry-run]   Current key: %s', config.sshKeyFingerprint);
@@ -88,17 +76,69 @@ export async function rotateKeyCommand(newKeyPath?: string, options?: { dryRun?:
     console.log('[dry-run]   - Upload new wrapped key blob to /v1/wrapped-key');
     console.log('[dry-run]   - Update config with new key fingerprint');
     console.log('[dry-run] No changes made.');
-    masterKey.dispose();
+    return;
+  }
+
+  // Resolve the OLD SSH key PEM. Preference: config.sshKeyPath; fall back
+  // to ~/.ssh/id_ed25519 then ~/.ssh/id_rsa.
+  const oldKeyPath = resolveOldKeyPath(config.sshKeyPath);
+  if (!oldKeyPath) {
+    console.error(
+      'Could not locate the previous SSH private key. Set CHAOSKB_SYNC=off or reconfigure sync.',
+    );
+    process.exitCode = 1;
+    return;
+  }
+
+  let oldKeyPem: string;
+  try {
+    oldKeyPem = fs.readFileSync(oldKeyPath, 'utf-8');
+  } catch (err) {
+    console.error(`Failed to read old SSH private key at ${oldKeyPath}: ${err instanceof Error ? err.message : String(err)}`);
+    process.exitCode = 1;
+    return;
+  }
+
+  // Read the old public key line so we can reconstruct the StandardTier.
+  let oldPublicKeyLine: string;
+  try {
+    oldPublicKeyLine = fs.readFileSync(`${oldKeyPath}.pub`, 'utf-8').trim();
+  } catch {
+    console.error(`Failed to read old SSH public key at ${oldKeyPath}.pub`);
+    process.exitCode = 1;
+    return;
+  }
+
+  // Build the storage backend. Supports the filesystem fallback when
+  // CHAOSKB_KEY_STORAGE=file is set.
+  const storage = buildStorage();
+
+  // Unlock the keyring with the old SSH key.
+  const oldTier = StandardTier.fromSshKey(oldPublicKeyLine);
+  const ring = new KeyRing({ tier: oldTier, storage });
+  try {
+    await ring.unlockWithSshKey(oldKeyPem);
+  } catch (err) {
+    // Check for legacy file-based master-key fallback when the keyring
+    // slot is empty (pre-migration users).
+    if (process.env.CHAOSKB_KEY_STORAGE === 'file' && fs.existsSync(FILE_KEY_PATH)) {
+      console.error(
+        'Legacy master.key file found but keyring slot is empty. Re-run setup or migrate by hand.',
+      );
+    } else {
+      console.error(
+        `Failed to unlock master key with old SSH key: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+    process.exitCode = 1;
     return;
   }
 
   try {
-    // Re-wrap master key with the new SSH public key
-    const { parseSSHPublicKey } = await import('../../crypto/ssh-keys.js');
-    const { wrapMasterKey } = await import('../../crypto/tiers/standard.js');
-
-    const sshKeyInfo = parseSSHPublicKey(newKeyInfo.publicKeyLine);
-    const wrappedBlob = wrapMasterKey(masterKey, sshKeyInfo);
+    // Re-wrap the master with the new SSH public key.
+    const newTier = StandardTier.fromSshKey(newKeyInfo.publicKeyLine);
+    const wrappedNew = await ring.withMaster(async (master) => newTier.wrap(master));
+    const wrappedBlob = wrappedNew.envelope;
     const wrappedBlobBase64 = Buffer.from(wrappedBlob).toString('base64');
 
     // Extract the base64 key blob from the public key line
@@ -111,10 +151,13 @@ export async function rotateKeyCommand(newKeyPath?: string, options?: { dryRun?:
     const db = new DatabaseManager().getPersonalDb();
 
     const endpoint = config.endpoint.replace(/\/+$/, '');
-    const oldClient = createSyncHttpClientFromConfig({
-      endpoint,
-      sshKeyPath: config.sshKeyPath ?? undefined,
-    }, db.syncSequence);
+    const oldClient = createSyncHttpClientFromConfig(
+      {
+        endpoint,
+        sshKeyPath: config.sshKeyPath ?? undefined,
+      },
+      db.syncSequence,
+    );
 
     const body = JSON.stringify({ newPublicKey: newPublicKeyBase64, wrappedBlob: wrappedBlobBase64 });
     const bodyBytes = new TextEncoder().encode(body);
@@ -129,10 +172,13 @@ export async function rotateKeyCommand(newKeyPath?: string, options?: { dryRun?:
     }
 
     // Upload new wrapped blob to /v1/wrapped-key using the NEW key for auth
-    const newClient = createSyncHttpClientFromConfig({
-      endpoint,
-      sshKeyPath: newKeyInfo.keyPath,
-    }, db.syncSequence);
+    const newClient = createSyncHttpClientFromConfig(
+      {
+        endpoint,
+        sshKeyPath: newKeyInfo.keyPath,
+      },
+      db.syncSequence,
+    );
 
     const uploadResponse = await newClient.put('/v1/wrapped-key', wrappedBlob);
 
@@ -143,6 +189,11 @@ export async function rotateKeyCommand(newKeyPath?: string, options?: { dryRun?:
       return;
     }
 
+    // Update the local keyring slot so subsequent launches unlock with
+    // the new key. We overwrite the `__personal` slot with the newly-
+    // wrapped blob.
+    await storage.put('__personal', wrappedNew);
+
     // Update config with new key fingerprint and keyPath
     config.sshKeyFingerprint = newKeyInfo.fingerprint;
     config.sshKeyPath = newKeyInfo.keyPath;
@@ -150,11 +201,36 @@ export async function rotateKeyCommand(newKeyPath?: string, options?: { dryRun?:
 
     console.log('Key rotation started. Other devices will be notified on next sync.');
   } finally {
-    masterKey.dispose();
+    await ring.lock();
   }
 }
 
-// --- SSH key detection ---
+// --- Storage + SSH key detection ---
+
+function buildStorage(): KeyStorage<'standard'> {
+  if (process.env.CHAOSKB_KEY_STORAGE === 'file') {
+    const fsDir = path.join(CHAOSKB_DIR, 'keyring');
+    fs.mkdirSync(fsDir, { recursive: true, mode: 0o700 });
+    return new FileSystemStorage({ root: fsDir }) as KeyStorage<'standard'>;
+  }
+  return new OsKeychainStorage<'standard'>({
+    service: KEYRING_SERVICE,
+    acceptedTiers: ['standard'] as const,
+  });
+}
+
+function resolveOldKeyPath(configSshKeyPath?: string): string | null {
+  if (configSshKeyPath && fs.existsSync(configSshKeyPath)) return configSshKeyPath;
+  const sshDir = path.join(os.homedir(), '.ssh');
+  const candidates = ['id_ed25519', 'id_rsa'];
+  for (const c of candidates) {
+    const p = path.join(sshDir, c);
+    if (fs.existsSync(p) && fs.existsSync(`${p}.pub`)) {
+      return p;
+    }
+  }
+  return null;
+}
 
 interface NewSSHKeyInfo {
   publicKeyLine: string;
@@ -198,8 +274,7 @@ async function readSSHKeyFromPath(keyPath: string): Promise<NewSSHKeyInfo | null
 
   try {
     const content = fs.readFileSync(pubKeyPath, 'utf-8').trim();
-    const { parseSSHPublicKey } = await import('../../crypto/ssh-keys.js');
-    const parsed = parseSSHPublicKey(content);
+    const parsed = parseSshPublicKey(content);
     return {
       publicKeyLine: content,
       fingerprint: parsed.fingerprint,

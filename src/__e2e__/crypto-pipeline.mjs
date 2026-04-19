@@ -24,7 +24,10 @@ console.log('\n=== Crypto Pipeline ===');
 
 try {
   const { EncryptionService } = await import('../dist/crypto/encryption-service.js');
-  const { SecureBuffer } = await import('../dist/crypto/secure-buffer.js');
+  // `SecureBuffer` now lives in @de-otio/crypto-envelope — the chaoskb
+  // re-export module (crypto/secure-buffer.js) was removed in the
+  // keyring migration.
+  const { SecureBuffer } = await import('@de-otio/crypto-envelope');
 
   const encryption = new EncryptionService();
 

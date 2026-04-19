@@ -1,6 +1,6 @@
 // Types shared with `@de-otio/crypto-envelope` are re-exported below; types
-// unique to chaoskb (payload variants, key tiers, SSH info, service
-// interfaces) are declared here.
+// unique to chaoskb (payload variants, SSH info, encryption-service
+// interface) are declared here.
 
 import type {
   Algorithm as _Algorithm,
@@ -49,7 +49,8 @@ export interface DerivedKeySet {
 /** SSH key type */
 export type SSHKeyType = 'ed25519' | 'rsa';
 
-/** Parsed SSH key information */
+/** Parsed SSH key information — chaoskb-local shape (kept for back-compat;
+ *  new code should use `SshPublicKey` from `@de-otio/keyring`). */
 export interface SSHKeyInfo {
   type: SSHKeyType;
   publicKeyBytes: Uint8Array;
@@ -103,14 +104,13 @@ export interface DecryptResult {
   envelope: Envelope;
 }
 
-/** OS keyring service interface */
-export interface IKeyringService {
-  store(service: string, account: string, secret: ISecureBuffer): Promise<void>;
-  retrieve(service: string, account: string): Promise<ISecureBuffer | null>;
-  delete(service: string, account: string): Promise<boolean>;
-}
-
-/** Encryption service interface */
+/**
+ * Encryption service interface — used by sync/canary and the MCP server.
+ *
+ * The default implementation {@link EncryptionService} delegates to
+ * `@de-otio/crypto-envelope`'s `encryptV1` / `decryptV1` primitives and
+ * chaoskb's HKDF key-set derivation. Tests provide their own mocks.
+ */
 export interface IEncryptionService {
   /** Generate a new random master key */
   generateMasterKey(): ISecureBuffer;
@@ -122,23 +122,4 @@ export interface IEncryptionService {
   decrypt(envelope: Envelope, keys: DerivedKeySet): DecryptResult;
   /** Generate a blob ID */
   generateBlobId(): string;
-}
-
-/** Key management service for a specific security tier */
-export interface IKeyManager {
-  tier: SecurityTier;
-  /** Wrap master key for storage */
-  wrapMasterKey(masterKey: ISecureBuffer): Promise<Uint8Array>;
-  /** Unwrap master key from storage */
-  unwrapMasterKey(wrappedKey: Uint8Array): Promise<ISecureBuffer>;
-}
-
-/** Project key management */
-export interface IProjectKeyManager {
-  /** Generate a new project key and wrap with personal master key */
-  createProjectKey(
-    masterKey: ISecureBuffer,
-  ): Promise<{ projectKey: ISecureBuffer; wrappedKey: Uint8Array }>;
-  /** Unwrap a project key using personal master key */
-  unwrapProjectKey(wrappedKey: Uint8Array, masterKey: ISecureBuffer): Promise<ISecureBuffer>;
 }

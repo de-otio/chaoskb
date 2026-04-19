@@ -46,7 +46,8 @@
   },
   "dependencies": {
     "@de-otio/agent-safety-pack": "^0.1.1",
-    "@de-otio/crypto-envelope": "^0.1.0-alpha.1",
+    "@de-otio/crypto-envelope": "^0.2.0-alpha.1",
+    "@de-otio/keyring": "^0.1.0-alpha.1",
     "@modelcontextprotocol/sdk": "^1.27.1",
     "@mozilla/readability": "^0.6.0",
     "@noble/ciphers": "^2.1.1",

@@ -225,13 +225,37 @@ export async function setupSyncCommand(options: SetupSyncOptions = {}): Promise<
     console.log('  Running canary blob verification...');
     try {
       const { EncryptionService } = await import('../../crypto/encryption-service.js');
-      const { KeyringService } = await import('../../crypto/keyring.js');
-      const keyring = new KeyringService();
-      const masterKey = await keyring.retrieve('chaoskb', 'master-key');
-      if (!masterKey) {
+      const {
+        KeyRing,
+        StandardTier,
+        OsKeychainStorage,
+        FileSystemStorage,
+      } = await import('@de-otio/keyring');
+      const { SecureBuffer } = await import('@de-otio/crypto-envelope');
+      const { KEYRING_SERVICE, CHAOSKB_DIR: _CDIR } = await import('../bootstrap.js');
+
+      const storage = process.env.CHAOSKB_KEY_STORAGE === 'file'
+        ? new FileSystemStorage<'standard'>({
+            root: path.join(_CDIR, 'keyring'),
+            acceptedTiers: ['standard'] as const,
+          })
+        : new OsKeychainStorage<'standard'>({
+            service: KEYRING_SERVICE,
+            acceptedTiers: ['standard'] as const,
+          });
+      const sshPubLine = fs.readFileSync(sshPubKeyPath, 'utf-8').trim();
+      const sshPem = fs.readFileSync(sshKeyPath, 'utf-8');
+      const tier = StandardTier.fromSshKey(sshPubLine);
+      const ring = new KeyRing({ tier, storage });
+      try {
+        await ring.unlockWithSshKey(sshPem);
+      } catch {
         console.error('  Master key not found. Run `chaoskb-mcp setup` first.');
         process.exit(1);
       }
+      const masterKey = await ring.withMaster(async (master) =>
+        SecureBuffer.from(Buffer.from(master.buffer)),
+      );
       const encryption = new EncryptionService();
       const keys = encryption.deriveKeys(masterKey);
       const canary = encryption.encrypt(
@@ -262,6 +286,7 @@ export async function setupSyncCommand(options: SetupSyncOptions = {}): Promise<
         throw new Error('Canary payload mismatch');
       }
       masterKey.dispose();
+      await ring.lock();
       console.log('  Canary verification passed.');
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

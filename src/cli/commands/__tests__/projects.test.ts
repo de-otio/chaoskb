@@ -3,15 +3,36 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 
-// Mock keyring
-const mockKeyringStore = vi.fn().mockResolvedValue(undefined);
-const mockKeyringDelete = vi.fn().mockResolvedValue(undefined);
-vi.mock('../../../crypto/keyring.js', () => ({
-  KeyringService: class MockKeyringService {
-    store = mockKeyringStore;
-    delete = mockKeyringDelete;
-  },
-}));
+// Mock keyring storage — projects.ts uses storage.put/delete, not a
+// direct KeyringService anymore.
+const mockStoragePut = vi.fn().mockResolvedValue(undefined);
+const mockStorageDelete = vi.fn().mockResolvedValue(undefined);
+
+vi.mock('@de-otio/keyring', () => {
+  class OsKeychainStorage {
+    readonly platform = 'node' as const;
+    readonly acceptedTiers: readonly string[];
+    constructor(opts: { acceptedTiers?: readonly string[] }) {
+      this.acceptedTiers = opts.acceptedTiers ?? ['standard'];
+    }
+    put = mockStoragePut;
+    get = vi.fn().mockResolvedValue(null);
+    delete = mockStorageDelete;
+    list = vi.fn().mockResolvedValue([]);
+  }
+  class FileSystemStorage {
+    readonly platform = 'node' as const;
+    readonly acceptedTiers: readonly string[];
+    constructor(opts: { acceptedTiers?: readonly string[] }) {
+      this.acceptedTiers = opts.acceptedTiers ?? ['standard'];
+    }
+    put = mockStoragePut;
+    get = vi.fn().mockResolvedValue(null);
+    delete = mockStorageDelete;
+    list = vi.fn().mockResolvedValue([]);
+  }
+  return { OsKeychainStorage, FileSystemStorage };
+});
 
 // Mock SSH signer
 const mockSignRequest = vi.fn().mockResolvedValue({
@@ -49,6 +70,16 @@ vi.mock('../setup.js', () => ({
   get CHAOSKB_DIR() { return tmpDir; },
   loadConfig: (...args: unknown[]) => mockLoadConfig(...args),
   saveConfig: (...args: unknown[]) => mockSaveConfig(...args),
+}));
+
+// Stub bootstrap (projects.ts imports CHAOSKB_DIR and KEYRING_SERVICE from
+// there). We re-export CHAOSKB_DIR pointing to the test temp dir.
+vi.mock('../../bootstrap.js', () => ({
+  get CHAOSKB_DIR() { return tmpDir; },
+  KEYRING_SERVICE: 'chaoskb',
+  FILE_KEY_PATH: '/dev/null/master.key',
+  IDENTITY_SECRET_SLOT: 'identity-secret',
+  IDENTITY_PUBLIC_SLOT: 'identity-public',
 }));
 
 import {
@@ -137,12 +168,12 @@ describe('projects commands', () => {
   });
 
   describe('projectEnable', () => {
-    it('creates project directory and stores key', async () => {
+    it('creates project directory and stores key via keyring storage', async () => {
       const config = makeConfig();
       mockFetch.mockResolvedValueOnce({
         ok: true,
         status: 200,
-        json: async () => ({ encryptedKey: 'enc-key-data', algorithm: 'xchacha20' }),
+        json: async () => ({ encryptedKey: Buffer.from('enc-key-data').toString('base64'), algorithm: 'xchacha20' }),
       });
 
       await projectEnable(config, 'team-docs');
@@ -151,11 +182,14 @@ describe('projects commands', () => {
       const projectDir = path.join(tmpDir, 'projects', 'team-docs');
       expect(fs.existsSync(projectDir)).toBe(true);
 
-      // Key should be stored in keyring
-      expect(mockKeyringStore).toHaveBeenCalledWith(
-        'chaoskb/project-team-docs',
-        'key',
-        expect.objectContaining({ buffer: expect.any(Buffer) }),
+      // Key should be stored in keyring storage at the project slot.
+      expect(mockStoragePut).toHaveBeenCalledWith(
+        'project-team-docs',
+        expect.objectContaining({
+          v: 1,
+          tier: 'standard',
+          envelope: expect.any(Uint8Array),
+        }),
       );
 
       // Config should be saved with the new project
@@ -189,7 +223,7 @@ describe('projects commands', () => {
       await projectDisable(config, 'team-docs');
 
       expect(fs.existsSync(projectDir)).toBe(false);
-      expect(mockKeyringDelete).toHaveBeenCalledWith('chaoskb/project-team-docs', 'key');
+      expect(mockStorageDelete).toHaveBeenCalledWith('project-team-docs');
       expect(mockSaveConfig).toHaveBeenCalledOnce();
       expect(config.projects).toHaveLength(0);
     });
@@ -221,7 +255,10 @@ describe('projects commands', () => {
       mockFetch.mockResolvedValueOnce({
         ok: true,
         status: 200,
-        json: async () => ({ encryptedKey: 'enc-key-data', algorithm: 'xchacha20' }),
+        json: async () => ({
+          encryptedKey: Buffer.from('enc-key-data').toString('base64'),
+          algorithm: 'xchacha20',
+        }),
       });
 
       await projectAccept(config, 'team-docs');
