@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- **Prompt-injection detection now blocks ingestion.** Content that matches the safety pack's injection patterns (instruction overrides, role impersonation, delimiter escapes) is no longer silently stored with an advisory warning — `kb_ingest` rejects the page with an error, honouring the `deny` verdict that `@de-otio/agent-safety-pack` was already returning. Secrets detection remains a warning (ingesting a page *about* credentials is often legitimate).
+
 ## [0.3.7] - 2026-04-20
 
 ### Added

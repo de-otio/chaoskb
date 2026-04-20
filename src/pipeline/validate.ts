@@ -700,16 +700,15 @@ function checkInjectionAndSecrets(text: string, issues: ContentIssue[]): void {
   if (injection.decision !== 'allow') {
     const count = injection.matchCount;
     issues.push({
-      severity: 'warning',
+      severity: 'error',
       code: 'possible-prompt-injection',
       message:
         count >= 3
           ? `The extracted content matches ${count} prompt-injection patterns ` +
             '(instruction overrides, role impersonation, or delimiter escapes). ' +
-            'This content has a high likelihood of containing adversarial text designed to manipulate an AI agent.'
+            'This content has a high likelihood of containing adversarial text designed to manipulate an AI agent, and was not stored.'
           : 'The extracted content contains text that resembles a prompt-injection attempt ' +
-            '(e.g. instruction overrides, system impersonation, or delimiter escapes). ' +
-            'The content was stored but may contain adversarial text.',
+            '(e.g. instruction overrides, system impersonation, or delimiter escapes), and was not stored.',
     });
   }
 
