@@ -321,3 +321,143 @@ async function verifyRoundTrip(blobPath: string, passphrase: string): Promise<vo
   const master = await tier.unwrap(wrapped, { kind: 'passphrase', passphrase });
   master.dispose();
 }
+
+// ============================================================================
+// Safety configuration
+// ============================================================================
+
+import type { ChaosKbSafetyConfig, ContentPolicy } from '../../pipeline/safety.js';
+
+const VALID_POLICIES: ContentPolicy[] = ['block', 'warn', 'allow'];
+
+export interface SafetyCommandOptions {
+  show?: boolean;
+  strict?: boolean;
+  noStrict?: boolean;
+  urlhaus?: boolean;
+  noUrlhaus?: boolean;
+  gsbKey?: string;
+  clearGsbKey?: boolean;
+  spamhausDbl?: boolean;
+  noSpamhausDbl?: boolean;
+  remoteTimeoutMs?: string;
+  injectionPolicy?: string;
+  secretsPolicy?: string;
+  reset?: boolean;
+}
+
+function parsePolicyFlag(raw: string | undefined, flag: string): ContentPolicy | undefined {
+  if (raw === undefined) return undefined;
+  if (!VALID_POLICIES.includes(raw as ContentPolicy)) {
+    throw new Error(`${flag} must be one of: ${VALID_POLICIES.join(', ')} (got "${raw}")`);
+  }
+  return raw as ContentPolicy;
+}
+
+function formatSafety(s: ChaosKbSafetyConfig | undefined): string {
+  const lines: string[] = [];
+  const strict = s?.strict ?? false;
+  const urlhaus = s?.remoteApis?.urlhaus ?? false;
+  const gsbSet = Boolean(s?.remoteApis?.googleSafeBrowsing);
+  const dnsbl = s?.remoteApis?.spamhausDbl ?? false;
+  const timeout = s?.remoteTimeoutMs ?? 5000;
+  const injection = s?.injectionPolicy ?? 'block';
+  const secrets = s?.secretsPolicy ?? 'warn';
+  lines.push(`  strict mode:           ${strict}`);
+  lines.push(`  URLhaus:               ${urlhaus}`);
+  lines.push(`  Google Safe Browsing:  ${gsbSet ? '<api-key set>' : 'off'}`);
+  lines.push(`  Spamhaus DBL:          ${dnsbl}`);
+  lines.push(`  remote API timeout:    ${timeout} ms`);
+  lines.push(`  injection policy:      ${injection}`);
+  lines.push(`  secrets policy:        ${secrets}`);
+  return lines.join('\n');
+}
+
+/**
+ * `chaoskb-mcp config safety [flags]`
+ *
+ * Show or update the safety-checker configuration. Each flag is
+ * independently applied; unset flags leave the existing value alone.
+ * `--reset` clears the entire safety section back to defaults.
+ */
+export async function safetyCommand(options: SafetyCommandOptions): Promise<void> {
+  const config = await loadConfig();
+  if (!config) {
+    console.error('ChaosKB is not configured. Run `chaoskb-mcp setup` first.');
+    process.exitCode = 1;
+    return;
+  }
+
+  // Show-only mode
+  if (options.show) {
+    console.log('ChaosKB safety configuration:');
+    console.log(formatSafety(config.safety));
+    return;
+  }
+
+  // Reset to defaults
+  if (options.reset) {
+    delete config.safety;
+    await saveConfig(config);
+    console.log('Safety configuration reset to defaults.');
+    console.log(formatSafety(undefined));
+    return;
+  }
+
+  const safety: ChaosKbSafetyConfig = config.safety ? { ...config.safety } : {};
+  safety.remoteApis = safety.remoteApis ? { ...safety.remoteApis } : {};
+
+  let changed = false;
+
+  if (options.strict) { safety.strict = true; changed = true; }
+  if (options.noStrict) { safety.strict = false; changed = true; }
+
+  if (options.urlhaus) { safety.remoteApis.urlhaus = true; changed = true; }
+  if (options.noUrlhaus) { safety.remoteApis.urlhaus = false; changed = true; }
+
+  if (options.gsbKey !== undefined) {
+    safety.remoteApis.googleSafeBrowsing = options.gsbKey;
+    changed = true;
+  }
+  if (options.clearGsbKey) {
+    delete safety.remoteApis.googleSafeBrowsing;
+    changed = true;
+  }
+
+  if (options.spamhausDbl) { safety.remoteApis.spamhausDbl = true; changed = true; }
+  if (options.noSpamhausDbl) { safety.remoteApis.spamhausDbl = false; changed = true; }
+
+  if (options.remoteTimeoutMs !== undefined) {
+    const n = Number(options.remoteTimeoutMs);
+    if (!Number.isFinite(n) || n <= 0) {
+      console.error(`--remote-timeout-ms must be a positive number (got "${options.remoteTimeoutMs}").`);
+      process.exitCode = 1;
+      return;
+    }
+    safety.remoteTimeoutMs = n;
+    changed = true;
+  }
+
+  try {
+    const ip = parsePolicyFlag(options.injectionPolicy, '--injection-policy');
+    if (ip) { safety.injectionPolicy = ip; changed = true; }
+    const sp = parsePolicyFlag(options.secretsPolicy, '--secrets-policy');
+    if (sp) { safety.secretsPolicy = sp; changed = true; }
+  } catch (err) {
+    console.error(err instanceof Error ? err.message : String(err));
+    process.exitCode = 1;
+    return;
+  }
+
+  if (!changed) {
+    console.log('ChaosKB safety configuration:');
+    console.log(formatSafety(config.safety));
+    console.log('\nNo flags provided. Use `--help` to see available options or `--show` to suppress this message.');
+    return;
+  }
+
+  config.safety = safety;
+  await saveConfig(config);
+  console.log('Safety configuration updated. Restart the MCP server for changes to take effect.');
+  console.log(formatSafety(config.safety));
+}

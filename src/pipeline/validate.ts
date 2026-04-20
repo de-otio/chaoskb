@@ -14,7 +14,7 @@
  */
 
 import type { ExtractedContent } from './types.js';
-import { safetyChecker } from './safety.js';
+import { getSafetyChecker, getInjectionPolicy, getSecretsPolicy } from './safety.js';
 
 // ===== Public types ========================================================
 
@@ -696,30 +696,43 @@ function checkZeroWidthCharacters(text: string, issues: ContentIssue[]): void {
 }
 
 function checkInjectionAndSecrets(text: string, issues: ContentIssue[]): void {
-  const injection = safetyChecker.checkContentInjection(text);
-  if (injection.decision !== 'allow') {
-    const count = injection.matchCount;
-    issues.push({
-      severity: 'error',
-      code: 'possible-prompt-injection',
-      message:
-        count >= 3
-          ? `The extracted content matches ${count} prompt-injection patterns ` +
-            '(instruction overrides, role impersonation, or delimiter escapes). ' +
-            'This content has a high likelihood of containing adversarial text designed to manipulate an AI agent, and was not stored.'
-          : 'The extracted content contains text that resembles a prompt-injection attempt ' +
-            '(e.g. instruction overrides, system impersonation, or delimiter escapes), and was not stored.',
-    });
+  const checker = getSafetyChecker();
+
+  const injectionPolicy = getInjectionPolicy();
+  if (injectionPolicy !== 'allow') {
+    const injection = checker.checkContentInjection(text);
+    if (injection.decision !== 'allow') {
+      const count = injection.matchCount;
+      const blocking = injectionPolicy === 'block';
+      const tail = blocking ? 'was not stored.' : 'was stored but may contain adversarial text.';
+      issues.push({
+        severity: blocking ? 'error' : 'warning',
+        code: 'possible-prompt-injection',
+        message:
+          count >= 3
+            ? `The extracted content matches ${count} prompt-injection patterns ` +
+              '(instruction overrides, role impersonation, or delimiter escapes). ' +
+              `This content has a high likelihood of containing adversarial text designed to manipulate an AI agent, and ${tail}`
+            : 'The extracted content contains text that resembles a prompt-injection attempt ' +
+              `(e.g. instruction overrides, system impersonation, or delimiter escapes), and ${tail}`,
+      });
+    }
   }
 
-  const secrets = safetyChecker.checkContentSecrets(text);
-  if (secrets.decision !== 'allow') {
-    issues.push({
-      severity: 'warning',
-      code: 'possible-credentials',
-      message:
-        'The extracted content appears to contain credentials or secret keys. ' +
-        'Review before using this content with any external services.',
-    });
+  const secretsPolicy = getSecretsPolicy();
+  if (secretsPolicy !== 'allow') {
+    const secrets = checker.checkContentSecrets(text);
+    if (secrets.decision !== 'allow') {
+      const blocking = secretsPolicy === 'block';
+      issues.push({
+        severity: blocking ? 'error' : 'warning',
+        code: 'possible-credentials',
+        message: blocking
+          ? 'The extracted content appears to contain credentials or secret keys; ' +
+            'ingestion rejected. Review your safety config if this is a false positive.'
+          : 'The extracted content appears to contain credentials or secret keys. ' +
+            'Review before using this content with any external services.',
+      });
+    }
   }
 }

@@ -18,7 +18,7 @@ import {
   projectDecline,
 } from './commands/projects.js';
 import { uninstallCommand } from './commands/uninstall.js';
-import { upgradeTierCommand } from './commands/config.js';
+import { upgradeTierCommand, safetyCommand } from './commands/config.js';
 import { rotateKeyCommand } from './commands/rotate-key.js';
 import { devicesAddCommand, devicesListCommand, devicesRemoveCommand } from './commands/devices.js';
 import { notificationsListCommand, notificationsDismissCommand } from './commands/notifications.js';
@@ -123,6 +123,26 @@ async function main(): Promise<void> {
     .option('--dry-run', 'show what would happen without making changes')
     .action(async (opts: { newKey?: string; dryRun?: boolean }) => {
       await rotateKeyCommand(opts.newKey, { dryRun: opts.dryRun });
+    });
+
+  config
+    .command('safety')
+    .description('Show or update the safety-checker configuration')
+    .option('--show', 'print the current configuration and exit')
+    .option('--strict', 'promote ambiguous (ask) safety decisions to deny')
+    .option('--no-strict', 'disable strict mode')
+    .option('--urlhaus', 'enable URLhaus URL threat-intel lookups (no API key required)')
+    .option('--no-urlhaus', 'disable URLhaus lookups')
+    .option('--gsb-key <key>', 'Google Safe Browsing API key (enables GSB lookups)')
+    .option('--clear-gsb-key', 'remove the stored Google Safe Browsing API key')
+    .option('--spamhaus-dbl', 'enable Spamhaus DBL DNS-based URL lookups')
+    .option('--no-spamhaus-dbl', 'disable Spamhaus DBL lookups')
+    .option('--remote-timeout-ms <ms>', 'timeout for remote API calls (default 5000)')
+    .option('--injection-policy <policy>', 'prompt-injection handling: block (default) | warn | allow')
+    .option('--secrets-policy <policy>', 'secrets handling: block | warn (default) | allow')
+    .option('--reset', 'reset the safety configuration to defaults')
+    .action(async (opts) => {
+      await safetyCommand(opts);
     });
 
   program

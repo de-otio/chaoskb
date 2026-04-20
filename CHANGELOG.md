@@ -8,7 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Security
-- **Prompt-injection detection now blocks ingestion.** Content that matches the safety pack's injection patterns (instruction overrides, role impersonation, delimiter escapes) is no longer silently stored with an advisory warning — `kb_ingest` rejects the page with an error, honouring the `deny` verdict that `@de-otio/agent-safety-pack` was already returning. Secrets detection remains a warning (ingesting a page *about* credentials is often legitimate).
+- **Prompt-injection detection now blocks ingestion.** Content that matches the safety pack's injection patterns (instruction overrides, role impersonation, delimiter escapes) is no longer silently stored with an advisory warning — `kb_ingest` rejects the page with an error, honouring the `deny` verdict that `@de-otio/agent-safety-pack` was already returning. Secrets detection remains a warning by default (ingesting a page *about* credentials is often legitimate).
+
+### Added
+- **Configurable safety policy.** The safety checker is no longer hardcoded; users can tune it via a new `safety` section in `~/.chaoskb/config.json` or the `chaoskb-mcp config safety` CLI subcommand. Exposed dials:
+  - `strict` — promote the pack's `'ask'` decisions to `'deny'`.
+  - `remoteApis.urlhaus` — enable free URLhaus URL threat-intel (no API key).
+  - `remoteApis.googleSafeBrowsing` — Google Safe Browsing v4 (API key).
+  - `remoteApis.spamhausDbl` — Spamhaus DBL via DNS.
+  - `remoteTimeoutMs` — per-call timeout for remote lookups (default 5000 ms).
+  - `injectionPolicy: 'block' | 'warn' | 'allow'` — default `block`.
+  - `secretsPolicy: 'block' | 'warn' | 'allow'` — default `warn`.
+  Environment variables (`AGENT_SAFETY_URLHAUS`, `AGENT_SAFETY_GSB_KEY`, etc.) continue to work as a lower-precedence fallback. Run `chaoskb-mcp config safety --help` for the full CLI surface.
 
 ## [0.3.7] - 2026-04-20
 

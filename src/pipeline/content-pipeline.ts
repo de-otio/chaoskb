@@ -4,7 +4,7 @@ import { extractContent, JsRenderRequiredError } from './extract.js';
 import { extractFromFile as fileExtract } from './file-extract.js';
 import { fetchUrl } from './fetch.js';
 import { fetchUrlWithBrowser } from './fetch-browser.js';
-import { safetyChecker } from './safety.js';
+import { getSafetyChecker } from './safety.js';
 import { searchEmbeddings } from './search.js';
 import { validateContent, validateFileContent } from './validate.js';
 import type {
@@ -34,7 +34,7 @@ export class ContentPipeline implements IContentPipeline {
   /** Fetch a URL and extract its main article content. */
   async fetchAndExtract(url: string): Promise<ExtractedContent> {
     if (!this.config._skipSafetyCheck) {
-      const urlCheck = await safetyChecker.checkUrl(url);
+      const urlCheck = await getSafetyChecker().checkUrl(url);
       if (urlCheck.decision !== 'allow') {
         throw new Error(`URL blocked: ${urlCheck.reason ?? urlCheck.decision}`);
       }

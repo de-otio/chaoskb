@@ -529,6 +529,10 @@ async function initializeDependencies(
   const { ModelManager } = await import('../pipeline/model-manager.js');
   const { Embedder } = await import('../pipeline/embedder.js');
   const { ContentPipeline } = await import('../pipeline/content-pipeline.js');
+  const { initSafetyChecker } = await import('../pipeline/safety.js');
+
+  // 0. Configure safety checker from user config (defaults apply when absent).
+  initSafetyChecker(config.safety);
 
   // 1. Set up encryption service
   const encryption = new EncryptionService();
@@ -772,6 +776,12 @@ export interface ChaosKBConfig {
   syncPending?: boolean;
   securityTier: string;
   projects: Array<{ name: string; createdAt: string }>;
+  /**
+   * Safety-checker configuration (URL threat intel, prompt-injection
+   * policy, secrets policy). Absent fields fall back to defaults.
+   * See `src/pipeline/safety.ts` for the shape and defaults.
+   */
+  safety?: import('../pipeline/safety.js').ChaosKbSafetyConfig;
 }
 
 export { TOOL_DEFINITIONS };
