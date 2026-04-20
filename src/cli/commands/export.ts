@@ -71,15 +71,15 @@ async function exportEncrypted(outputDir: string): Promise<void> {
 
     const { DatabaseManager } = await import('../../storage/database-manager.js');
     const { EncryptionService } = await import('../../crypto/encryption-service.js');
-    const { KeyringService } = await import('../../crypto/keyring.js');
-    const { argon2Derive } = await import('../../crypto/index.js');
+    const { deriveFromPassphrase: argon2Derive } = await import(
+      '@de-otio/crypto-envelope/primitives'
+    );
 
-    const keyring = new KeyringService();
-    const masterKey = await keyring.retrieve('chaoskb', 'master-key');
-    if (!masterKey) {
-      console.log('  Master key not found in OS keyring. Run `chaoskb-mcp setup` first.');
-      return;
-    }
+    // Note: we don't need the personal master for encrypted export — the
+    // wrapping key is derived directly from the user-supplied export
+    // passphrase. Previously we retrieved the master for no reason other
+    // than to dispose it; the keyring unlock path has non-trivial cost
+    // so skip it here.
 
     // Derive wrapping key from export passphrase
     const salt = crypto.randomBytes(32);
@@ -145,7 +145,6 @@ async function exportEncrypted(outputDir: string): Promise<void> {
       sourceCount: sources.length,
     };
 
-    masterKey.dispose();
     dbManager.closeAll();
 
     const outputFile = path.join(outputDir, 'chaoskb-export.json');

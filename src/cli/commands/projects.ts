@@ -1,8 +1,15 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import {
+  OsKeychainStorage,
+  FileSystemStorage,
+  type KeyStorage,
+  type WrappedKey,
+} from '@de-otio/keyring';
 import { saveConfig, CHAOSKB_DIR } from './setup.js';
 import type { ChaosKBConfig } from '../mcp-server.js';
 import { createSyncClient } from '../tools/sync-client.js';
+import { KEYRING_SERVICE } from '../bootstrap.js';
 
 export interface SharedProjectMeta {
   name: string;
@@ -14,6 +21,24 @@ export interface SharedProjectMeta {
 export interface ProjectKeyResponse {
   encryptedKey: string;
   algorithm: string;
+}
+
+/** Build the keyring storage for project keys. */
+function buildStorage(): KeyStorage<'standard'> {
+  if (process.env.CHAOSKB_KEY_STORAGE === 'file') {
+    const fsDir = path.join(CHAOSKB_DIR, 'keyring');
+    fs.mkdirSync(fsDir, { recursive: true, mode: 0o700 });
+    return new FileSystemStorage({ root: fsDir }) as KeyStorage<'standard'>;
+  }
+  return new OsKeychainStorage<'standard'>({
+    service: KEYRING_SERVICE,
+    acceptedTiers: ['standard'] as const,
+  });
+}
+
+/** Build the slot name for a project-scoped key. */
+function projectSlotName(projectName: string): string {
+  return `project-${projectName}`;
 }
 
 /**
@@ -101,12 +126,18 @@ export async function projectEnable(config: ChaosKBConfig, projectName: string):
   const projectDir = path.join(CHAOSKB_DIR, 'projects', projectName);
   fs.mkdirSync(projectDir, { recursive: true, mode: 0o700 });
 
-  // Store project key in keyring
-  const { KeyringService } = await import('../../crypto/keyring.js');
-  const keyring = new KeyringService();
-  const { SecureBuffer } = await import('../../crypto/secure-buffer.js');
-  const keyBuf = SecureBuffer.from(Buffer.from(keyData.encryptedKey, 'base64'));
-  await keyring.store(`chaoskb/project-${projectName}`, 'key', keyBuf);
+  // Store project key in keyring storage. The server-delivered blob is
+  // already wrapped for this device; we persist it verbatim at a
+  // per-project slot so that future unlock paths can reach it. We serialise
+  // as a WrappedKey to match the storage contract.
+  const storage = buildStorage();
+  const wrapped: WrappedKey = {
+    v: 1,
+    tier: 'standard',
+    envelope: new Uint8Array(Buffer.from(keyData.encryptedKey, 'base64')),
+    ts: new Date().toISOString(),
+  };
+  await storage.put(projectSlotName(projectName), wrapped);
 
   // Add to config
   config.projects.push({ name: projectName, createdAt: new Date().toISOString() });
@@ -136,11 +167,10 @@ export async function projectDisable(config: ChaosKBConfig, projectName: string)
     // Directory may not exist; that's fine
   }
 
-  // Remove project key from keyring
+  // Remove project key from keyring storage
   try {
-    const { KeyringService } = await import('../../crypto/keyring.js');
-    const keyring = new KeyringService();
-    await keyring.delete(`chaoskb/project-${projectName}`, 'key');
+    const storage = buildStorage();
+    await storage.delete(projectSlotName(projectName));
   } catch {
     // Key may not exist in keyring; that's fine
   }

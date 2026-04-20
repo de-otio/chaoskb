@@ -1,8 +1,9 @@
 /**
  * Integration tests for the bootstrap module.
  *
- * Uses real temp directories but mocks crypto/keyring/database
- * to avoid requiring native modules in CI.
+ * Uses real temp directories and keyring's `InMemoryStorage`/`StandardTier`
+ * (via a mocked `@de-otio/keyring`) to avoid touching the real OS
+ * keychain or requiring the `@napi-rs/keyring` native binary in CI.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -10,33 +11,75 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 
-// Mock the dynamic imports that bootstrap uses
-const mockKeyringStore = vi.fn().mockResolvedValue(undefined);
-vi.mock('../../crypto/keyring.js', () => ({
-  KeyringService: class {
-    store = mockKeyringStore;
-    retrieve = vi.fn().mockResolvedValue(null);
-    delete = vi.fn().mockResolvedValue(true);
-  },
-}));
+// Track keyring invocations.
+const mockSetup = vi.fn().mockResolvedValue(undefined);
+const mockGet = vi.fn().mockResolvedValue(null);
+const mockPut = vi.fn().mockResolvedValue(undefined);
 
-const mockMasterKey = {
-  buffer: Buffer.alloc(32, 0xab),
-  length: 32,
-  isDisposed: false,
-  dispose: vi.fn(),
-};
-vi.mock('../../crypto/encryption-service.js', () => ({
-  EncryptionService: class {
-    generateMasterKey = vi.fn().mockReturnValue(mockMasterKey);
-  },
-}));
+// Stubs for keyring constructors. We treat the `@napi-rs/keyring`-backed
+// `OsKeychainStorage` as a plain in-memory slot map that surfaces through
+// the same spy.
+vi.mock('@de-otio/keyring', () => {
+  class OsKeychainUnavailable extends Error {
+    constructor(msg: string) {
+      super(msg);
+      this.name = 'OsKeychainUnavailable';
+    }
+  }
+  class KeyRing {
+    constructor(_opts: unknown) {}
+    setup = mockSetup;
+    getWrapped = vi.fn().mockResolvedValue(null);
+    unlockWithSshKey = vi.fn().mockResolvedValue(undefined);
+    lock = vi.fn().mockResolvedValue(undefined);
+    delete = vi.fn().mockResolvedValue(undefined);
+    get isUnlocked() { return false; }
+  }
+  const StandardTier = { fromSshKey: vi.fn(() => ({ kind: 'standard' })) };
+  class OsKeychainStorage {
+    readonly platform = 'node' as const;
+    readonly acceptedTiers: readonly string[];
+    constructor(opts: { acceptedTiers?: readonly string[] }) {
+      this.acceptedTiers = opts.acceptedTiers ?? ['standard', 'maximum'];
+    }
+    put = mockPut;
+    get = mockGet;
+    delete = vi.fn();
+    list = vi.fn().mockResolvedValue([]);
+  }
+  class FileSystemStorage {
+    readonly platform = 'node' as const;
+    readonly acceptedTiers: readonly string[];
+    constructor(opts: { acceptedTiers?: readonly string[] }) {
+      this.acceptedTiers = opts.acceptedTiers ?? ['standard', 'maximum'];
+    }
+    put = mockPut;
+    get = mockGet;
+    delete = vi.fn();
+    list = vi.fn().mockResolvedValue([]);
+  }
+  return {
+    KeyRing,
+    StandardTier,
+    OsKeychainStorage,
+    FileSystemStorage,
+    OsKeychainUnavailable,
+    parseSshPublicKey: vi.fn(() => ({
+      type: 'ed25519',
+      publicKeyBytes: new Uint8Array(32),
+      fingerprint: 'SHA256:test',
+    })),
+    sshFingerprint: vi.fn(() => 'SHA256:test'),
+  };
+});
 
 const mockDbClose = vi.fn();
 const mockDbManagerCloseAll = vi.fn();
 vi.mock('../../storage/database-manager.js', () => ({
   DatabaseManager: class {
-    constructor() { /* no-op */ }
+    constructor() {
+      /* no-op */
+    }
     getPersonalDb = vi.fn().mockReturnValue({ close: mockDbClose });
     closeAll = mockDbManagerCloseAll;
   },
@@ -47,25 +90,32 @@ import { bootstrap } from '../bootstrap.js';
 describe('bootstrap', () => {
   let tmpDir: string;
   let chaoskbDir: string;
-
   let stderrWriteSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'chaoskb-bootstrap-test-'));
     chaoskbDir = path.join(tmpDir, '.chaoskb');
     vi.clearAllMocks();
-    mockMasterKey.isDisposed = false;
-    mockMasterKey.dispose = vi.fn();
-    // Suppress stderr output (macOS keychain message, warnings)
     stderrWriteSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    // CHAOSKB_SYNC=off so we don't try to detect real SSH keys from ~/.ssh
+    // or hit the network during tests.
+    process.env.CHAOSKB_SYNC = 'off';
   });
 
   afterEach(() => {
     stderrWriteSpy.mockRestore();
     fs.rmSync(tmpDir, { recursive: true, force: true });
+    delete process.env.CHAOSKB_SYNC;
+    delete process.env.CHAOSKB_KEY_STORAGE;
   });
 
-  it('should create directory structure, store key, and write config', async () => {
+  it('should create directory structure and write config when CHAOSKB_SYNC=off', async () => {
+    // With CHAOSKB_SYNC=off, no SSH key is detected and no keyring
+    // wrapping happens. CHAOSKB_KEY_STORAGE=file also drives the
+    // file-based master.key fallback path so bootstrap can complete
+    // without an SSH key.
+    process.env.CHAOSKB_KEY_STORAGE = 'file';
+
     await bootstrap({ baseDir: chaoskbDir });
 
     // Directory exists with correct structure
@@ -85,12 +135,6 @@ describe('bootstrap', () => {
       expect(configStat.mode & 0o777).toBe(0o600);
     }
 
-    // Key stored in keyring (master key + identity keypair = 3 store calls)
-    expect(mockKeyringStore).toHaveBeenCalledWith('chaoskb', 'master-key', mockMasterKey);
-
-    // Master key disposed
-    expect(mockMasterKey.dispose).toHaveBeenCalled();
-
     // Database initialized and closed
     expect(mockDbClose).toHaveBeenCalled();
     expect(mockDbManagerCloseAll).toHaveBeenCalled();
@@ -106,84 +150,54 @@ describe('bootstrap', () => {
 
     await bootstrap({ baseDir: chaoskbDir });
 
-    // Should not have attempted to generate key or init DB
-    expect(mockKeyringStore).not.toHaveBeenCalled();
+    // Should not have attempted to wrap or init DB
+    expect(mockSetup).not.toHaveBeenCalled();
     expect(mockDbClose).not.toHaveBeenCalled();
   });
 
-  it('should fall back to file-based key when keyring fails and env var set', async () => {
-    mockKeyringStore.mockRejectedValueOnce(new Error('Keyring unavailable'));
-
-    const originalEnv = process.env.CHAOSKB_KEY_STORAGE;
+  it('should fall back to file-based key when CHAOSKB_KEY_STORAGE=file is set and no SSH key', async () => {
     process.env.CHAOSKB_KEY_STORAGE = 'file';
 
-    try {
-      await bootstrap({ baseDir: chaoskbDir });
+    await bootstrap({ baseDir: chaoskbDir });
 
-      // File-based key written
-      const keyPath = path.join(chaoskbDir, 'master.key');
-      expect(fs.existsSync(keyPath)).toBe(true);
-      const keyHex = fs.readFileSync(keyPath, 'utf-8');
-      expect(keyHex).toBe(mockMasterKey.buffer.toString('hex'));
+    // File-based key written
+    const keyPath = path.join(chaoskbDir, 'master.key');
+    expect(fs.existsSync(keyPath)).toBe(true);
+    const keyHex = fs.readFileSync(keyPath, 'utf-8');
+    expect(keyHex).toMatch(/^[0-9a-f]{64}$/);
 
-      // Key file has secure permissions (0o600) — skip on Windows
-      if (process.platform !== 'win32') {
-        const keyStat = fs.statSync(keyPath);
-        expect(keyStat.mode & 0o777).toBe(0o600);
-      }
-
-      // Warning emitted
-      expect(stderrWriteSpy).toHaveBeenCalledWith(
-        expect.stringContaining('OS keyring unavailable'),
-      );
-
-      // Config still written
-      expect(fs.existsSync(path.join(chaoskbDir, 'config.json'))).toBe(true);
-    } finally {
-      if (originalEnv === undefined) {
-        delete process.env.CHAOSKB_KEY_STORAGE;
-      } else {
-        process.env.CHAOSKB_KEY_STORAGE = originalEnv;
-      }
+    if (process.platform !== 'win32') {
+      const keyStat = fs.statSync(keyPath);
+      expect(keyStat.mode & 0o777).toBe(0o600);
     }
+
+    // Config still written
+    expect(fs.existsSync(path.join(chaoskbDir, 'config.json'))).toBe(true);
   });
 
-  it('should throw when keyring fails and env var not set', async () => {
-    mockKeyringStore.mockRejectedValueOnce(new Error('Keyring unavailable'));
+  it('should throw when no SSH key is available and CHAOSKB_KEY_STORAGE not set', async () => {
+    // CHAOSKB_SYNC=off + no CHAOSKB_KEY_STORAGE and no SSH key =>
+    // bootstrap fails with a descriptive error.
+    await expect(bootstrap({ baseDir: chaoskbDir })).rejects.toThrow(
+      /No SSH key found|CHAOSKB_KEY_STORAGE=file/,
+    );
 
-    const originalEnv = process.env.CHAOSKB_KEY_STORAGE;
-    delete process.env.CHAOSKB_KEY_STORAGE;
-
-    try {
-      await expect(bootstrap({ baseDir: chaoskbDir })).rejects.toThrow(
-        'Failed to store master key in OS keyring',
-      );
-
-      // Config should NOT have been written (bootstrap failed)
-      expect(fs.existsSync(path.join(chaoskbDir, 'config.json'))).toBe(false);
-
-      // Master key should be disposed even on failure
-      expect(mockMasterKey.dispose).toHaveBeenCalled();
-    } finally {
-      if (originalEnv !== undefined) {
-        process.env.CHAOSKB_KEY_STORAGE = originalEnv;
-      }
-    }
+    // Config should NOT have been written (bootstrap failed)
+    expect(fs.existsSync(path.join(chaoskbDir, 'config.json'))).toBe(false);
   });
 
   it('should handle double-check pattern after lock acquisition', async () => {
-    // Simulate another process creating config between existsSync check and lock acquisition
-    // by pre-creating the config before bootstrap runs, but after the directory exists
+    process.env.CHAOSKB_KEY_STORAGE = 'file';
     fs.mkdirSync(chaoskbDir, { recursive: true });
 
-    // First call creates config (stores master key, and optionally identity keypair)
+    // First call creates config
     await bootstrap({ baseDir: chaoskbDir });
-    expect(mockKeyringStore).toHaveBeenCalled();
+    expect(mockDbClose).toHaveBeenCalled();
 
     vi.clearAllMocks();
 
     // Second call should no-op (idempotent)
     await bootstrap({ baseDir: chaoskbDir });
-    expect(mockKeyringStore).not.toHaveBeenCalled();
+    expect(mockDbClose).not.toHaveBeenCalled();
   });
 });

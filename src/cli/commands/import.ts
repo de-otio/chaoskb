@@ -233,7 +233,9 @@ async function importEncrypted(inputFile: string, options: ImportOptions): Promi
   console.log('  Deriving wrapping key with Argon2id...');
 
   const { EncryptionService } = await import('../../crypto/encryption-service.js');
-  const { argon2Derive } = await import('../../crypto/index.js');
+  const { deriveFromPassphrase: argon2Derive } = await import(
+    '@de-otio/crypto-envelope/primitives'
+  );
 
   // Derive the wrapping key from the passphrase and salt
   const salt = new Uint8Array(Buffer.from(exportData.wrappedKey.salt, 'base64'));

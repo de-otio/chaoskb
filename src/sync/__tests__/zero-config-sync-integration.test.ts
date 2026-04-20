@@ -1,9 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execSync } from 'node:child_process';
-import sodium from 'sodium-native';
 
 // --- Sequence Counter Integration ---
 
@@ -95,104 +94,7 @@ describe('SSHSigner with sequence integration', () => {
   });
 });
 
-// --- Invite Crypto Round-Trip ---
-
-import { createInviteBlob, openInviteBlob, padPayload, unpadPayload } from '../../crypto/invite.js';
-import { parseSSHPublicKey } from '../../crypto/ssh-keys.js';
-import type { SSHKeyInfo } from '../../crypto/types.js';
-
-function generateTestSSHKey(): { keyInfo: SSHKeyInfo; secretKey: Uint8Array } {
-  const pk = Buffer.alloc(sodium.crypto_sign_PUBLICKEYBYTES);
-  const sk = Buffer.alloc(sodium.crypto_sign_SECRETKEYBYTES);
-  sodium.crypto_sign_keypair(pk, sk);
-
-  const typeStr = Buffer.from('ssh-ed25519');
-  const typeLen = Buffer.alloc(4);
-  typeLen.writeUInt32BE(typeStr.length);
-  const pkLen = Buffer.alloc(4);
-  pkLen.writeUInt32BE(pk.length);
-  const blob = Buffer.concat([typeLen, typeStr, pkLen, pk]);
-  const keyInfo = parseSSHPublicKey(`ssh-ed25519 ${blob.toString('base64')} test`);
-
-  return { keyInfo, secretKey: new Uint8Array(sk) };
-}
-
-describe('Invite crypto integration', () => {
-  it('full round-trip: sender creates invite, recipient opens it', () => {
-    const sender = generateTestSSHKey();
-    const recipient = generateTestSSHKey();
-    const projectKey = new Uint8Array(32);
-    projectKey.fill(0x42);
-    const projectId = 'acme-api-project';
-
-    const blob = createInviteBlob(projectKey, projectId, sender.keyInfo, recipient.keyInfo);
-    const recovered = openInviteBlob(blob, recipient.secretKey, recipient.keyInfo, sender.keyInfo, projectId);
-
-    expect(Buffer.from(recovered).toString('hex')).toBe(Buffer.from(projectKey).toString('hex'));
-  });
-
-  it('domain separation: wrong sender fingerprint prevents decryption', () => {
-    const sender = generateTestSSHKey();
-    const fakeSender = generateTestSSHKey();
-    const recipient = generateTestSSHKey();
-    const projectKey = new Uint8Array(32);
-
-    const blob = createInviteBlob(projectKey, 'proj-1', sender.keyInfo, recipient.keyInfo);
-
-    expect(() =>
-      openInviteBlob(blob, recipient.secretKey, recipient.keyInfo, fakeSender.keyInfo, 'proj-1'),
-    ).toThrow();
-  });
-
-  it('all invite blobs have identical size regardless of content', () => {
-    const sender = generateTestSSHKey();
-    const recipient = generateTestSSHKey();
-
-    const blob1 = createInviteBlob(new Uint8Array(16), 'a', sender.keyInfo, recipient.keyInfo);
-    const blob2 = createInviteBlob(new Uint8Array(32), 'a-very-long-project-name-here', sender.keyInfo, recipient.keyInfo);
-
-    expect(blob1.length).toBe(blob2.length);
-  });
-});
-
-// --- TOFU Key Pinning ---
-
-import { pinKey, checkKeyPin, getPinnedKey, KeyMismatchError } from '../../crypto/known-keys.js';
-
-describe('TOFU key pinning integration', () => {
-  // known-keys.ts uses os.homedir() internally — mocked in known-keys.test.ts
-  // Here we test the checkKeyPin logic directly
-
-  it('checkKeyPin returns new/match/mismatch correctly', () => {
-    // These are unit-level but verify the state machine
-    const tmpDir = mkdtempSync(join(tmpdir(), 'chaoskb-tofu-'));
-    mkdirSync(join(tmpDir, '.chaoskb'), { recursive: true });
-
-    // We can't easily override homedir here, so just verify the exports exist
-    expect(typeof pinKey).toBe('function');
-    expect(typeof checkKeyPin).toBe('function');
-    expect(typeof getPinnedKey).toBe('function');
-    expect(typeof KeyMismatchError).toBe('function');
-
-    rmSync(tmpDir, { recursive: true, force: true });
-  });
-});
-
-// --- Padding ---
-
-describe('Payload padding integration', () => {
-  it('round-trip with various payload sizes', () => {
-    const sizes = [0, 1, 10, 100, 400, 507]; // max is 508 (512 - 4 byte header)
-    for (const size of sizes) {
-      const payload = new Uint8Array(size);
-      payload.fill(size % 256);
-
-      const padded = padPayload(payload, 512);
-      expect(padded.length).toBe(512);
-
-      const recovered = unpadPayload(padded);
-      expect(recovered.length).toBe(size);
-      expect(Buffer.from(recovered).equals(Buffer.from(payload))).toBe(true);
-    }
-  });
-});
+// Invite crypto and TOFU key-pinning tests were removed with the
+// in-tree implementations — those flows now live in `@de-otio/keyring`
+// (age-based invite, `KnownKeys` TOFU) and are covered by keyring's own
+// test suite.

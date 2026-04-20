@@ -301,7 +301,7 @@ The workflow is considered complete and passing when:
 
 ## Resolved Questions
 
-1. **Keyring bypass flag name** — Resolved: `CHAOSKB_UNSAFE_NO_KEYRING=1`. The name includes "unsafe" to discourage accidental use. When set, `initializeDependencies()` generates an ephemeral master key in memory instead of calling `KeyringService.retrieve()`. A loud warning is written to stderr on startup.
+1. **Keyring bypass flag name** — Resolved: `CHAOSKB_UNSAFE_NO_KEYRING=1`. The name includes "unsafe" to discourage accidental use. When set, `initializeDependencies()` generates an ephemeral master key in memory instead of opening the persisted `@de-otio/keyring` storage (`KeyRing.unlock` → `withMaster`). A loud warning is written to stderr on startup.
 
 2. **MCP server keyring dependency** — Resolved: `mcp-server.ts:initializeDependencies()` calls into the keyring unconditionally on startup. The bypass generates an ephemeral key and also synthesizes a minimal config object so that `loadConfig()` returning null does not cause `process.exit(1)`.
 

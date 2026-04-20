@@ -524,7 +524,6 @@ async function initializeDependencies(
   config: ChaosKBConfig,
 ): Promise<McpDependencies> {
   // Dynamic imports to keep startup fast when running in CLI mode
-  const { KeyringService } = await import('../crypto/keyring.js');
   const { EncryptionService } = await import('../crypto/encryption-service.js');
   const { DatabaseManager } = await import('../storage/database-manager.js');
   const { ModelManager } = await import('../pipeline/model-manager.js');
@@ -546,20 +545,7 @@ async function initializeDependencies(
       // Maximum tier: decrypt master key from passphrase-wrapped blob
       masterKey = await unlockMaximumTierKey();
     } else {
-      const keyring = new KeyringService();
-      masterKey = await keyring.retrieve('chaoskb', 'master-key');
-      if (!masterKey && process.env.CHAOSKB_KEY_STORAGE === 'file') {
-        // File-based key fallback
-        const { FILE_KEY_PATH } = await import('./bootstrap.js');
-        const fs = await import('node:fs');
-        try {
-          const hex = fs.readFileSync(FILE_KEY_PATH, 'utf-8').trim();
-          const { SecureBuffer } = await import('../crypto/secure-buffer.js');
-          masterKey = SecureBuffer.from(Buffer.from(hex, 'hex'));
-        } catch {
-          // Fall through to the error below
-        }
-      }
+      masterKey = await unlockStandardTierKey(config);
     }
     if (!masterKey) {
       throw new Error(
@@ -628,11 +614,97 @@ async function initializeDependencies(
 }
 
 /**
+ * Unlock the master key for Standard tier.
+ *
+ * Reads the wrapped master blob from the keyring (OS keychain, or
+ * filesystem when `CHAOSKB_KEY_STORAGE=file` is set), identifies the
+ * SSH key file from config, and unwraps the master via keyring's
+ * `StandardTier`.
+ *
+ * Returns `null` if the keyring slot is empty.
+ */
+async function unlockStandardTierKey(
+  config: ChaosKBConfig,
+): Promise<import('../crypto/types.js').ISecureBuffer | null> {
+  const fs = await import('node:fs');
+  const pathMod = await import('node:path');
+  const osMod = await import('node:os');
+  const {
+    KeyRing,
+    StandardTier,
+    OsKeychainStorage,
+    FileSystemStorage,
+  } = await import('@de-otio/keyring');
+  const { KEYRING_SERVICE, CHAOSKB_DIR, FILE_KEY_PATH } = await import('./bootstrap.js');
+  const { SecureBuffer } = await import('@de-otio/crypto-envelope');
+
+  const wantFile = process.env.CHAOSKB_KEY_STORAGE === 'file';
+  const storage = wantFile
+    ? new FileSystemStorage<'standard'>({
+        root: pathMod.join(CHAOSKB_DIR, 'keyring'),
+        acceptedTiers: ['standard'] as const,
+      })
+    : new OsKeychainStorage<'standard'>({
+        service: KEYRING_SERVICE,
+        acceptedTiers: ['standard'] as const,
+      });
+
+  // Legacy file-based master.key fallback (plain 32-byte hex). Kept so
+  // users mid-migration don't lose access to their data.
+  if (wantFile && fs.existsSync(FILE_KEY_PATH) && !(await storage.get('__personal'))) {
+    const hex = fs.readFileSync(FILE_KEY_PATH, 'utf-8').trim();
+    return SecureBuffer.from(Buffer.from(hex, 'hex'));
+  }
+
+  // Resolve the SSH private key path.
+  const sshKeyPath =
+    config.sshKeyPath && fs.existsSync(config.sshKeyPath)
+      ? config.sshKeyPath
+      : await defaultSshKeyPath(pathMod, osMod);
+  if (!sshKeyPath) return null;
+
+  let sshPem: string;
+  let sshPubLine: string;
+  try {
+    sshPem = fs.readFileSync(sshKeyPath, 'utf-8');
+    sshPubLine = fs.readFileSync(`${sshKeyPath}.pub`, 'utf-8').trim();
+  } catch {
+    return null;
+  }
+
+  const tier = StandardTier.fromSshKey(sshPubLine);
+  const ring = new KeyRing({ tier, storage });
+  const wrapped = await ring.getWrapped();
+  if (!wrapped) return null;
+  await ring.unlockWithSshKey(sshPem);
+  try {
+    return await ring.withMaster(async (master) =>
+      SecureBuffer.from(Buffer.from(master.buffer)),
+    );
+  } finally {
+    await ring.lock();
+  }
+}
+
+async function defaultSshKeyPath(
+  pathMod: typeof import('node:path'),
+  osMod: typeof import('node:os'),
+): Promise<string | null> {
+  const fs = await import('node:fs');
+  const sshDir = pathMod.join(osMod.homedir(), '.ssh');
+  for (const c of ['id_ed25519', 'id_rsa']) {
+    const p = pathMod.join(sshDir, c);
+    if (fs.existsSync(p) && fs.existsSync(`${p}.pub`)) return p;
+  }
+  return null;
+}
+
+/**
  * Unlock the master key for maximum security tier.
  *
- * Reads the encrypted key blob from ~/.chaoskb/master-key.enc,
- * prompts for the passphrase on stderr, derives the wrapping key
- * with Argon2id, and decrypts with XChaCha20-Poly1305.
+ * Reads the encrypted key blob from ~/.chaoskb/master-key.enc (a
+ * serialised keyring `WrappedKey`), prompts for the passphrase on
+ * stderr, and delegates to keyring's `MaximumTier.unwrap`.
  *
  * MCP servers communicate over stdin/stdout (JSON-RPC), so the
  * passphrase prompt goes to stderr. This only works when stderr
@@ -643,6 +715,10 @@ async function unlockMaximumTierKey(): Promise<import('../crypto/types.js').ISec
   const fs = await import('node:fs');
   const path = await import('node:path');
   const { CHAOSKB_DIR } = await import('./bootstrap.js');
+  const { MaximumTier } = await import('@de-otio/keyring');
+  const { parseWrappedKey } = await import('./commands/config.js');
+  const { SecureBuffer } = await import('@de-otio/crypto-envelope');
+
   const blobPath = path.join(CHAOSKB_DIR, 'master-key.enc');
 
   let blobJson: string;
@@ -651,17 +727,13 @@ async function unlockMaximumTierKey(): Promise<import('../crypto/types.js').ISec
   } catch {
     throw new Error(
       `Maximum tier key blob not found at ${blobPath}. ` +
-      'Re-run `chaoskb-mcp config upgrade-tier maximum` or reinstall.',
+        'Re-run `chaoskb-mcp config upgrade-tier maximum` or reinstall.',
     );
   }
 
-  const blob = JSON.parse(blobJson) as {
-    v: number; kdf: string; t: number; m: number; p: number;
-    salt: string; nonce: string; ciphertext: string;
-  };
-
-  if (blob.v !== 1 || blob.kdf !== 'argon2id') {
-    throw new Error(`Unsupported key blob format: v=${blob.v}, kdf=${blob.kdf}`);
+  const wrapped = parseWrappedKey(blobJson);
+  if (wrapped.tier !== 'maximum') {
+    throw new Error(`Expected maximum tier blob; found ${wrapped.tier}`);
   }
 
   // Prompt for passphrase on stderr (stdout is reserved for MCP JSON-RPC)
@@ -674,32 +746,20 @@ async function unlockMaximumTierKey(): Promise<import('../crypto/types.js').ISec
     });
   });
 
-  // Derive wrapping key
-  const { argon2Derive } = await import('../crypto/index.js');
-  const salt = Buffer.from(blob.salt, 'hex');
-  const wrappingKey = argon2Derive(passphrase, salt);
-
   try {
-    // Decrypt master key
-    const { aeadDecrypt } = await import('../crypto/aead.js');
-    const nonce = new Uint8Array(Buffer.from(blob.nonce, 'hex'));
-    const ctAndTag = Buffer.from(blob.ciphertext, 'hex');
-    // XChaCha20-Poly1305 tag is last 16 bytes
-    const ciphertext = new Uint8Array(ctAndTag.subarray(0, ctAndTag.length - 16));
-    const tag = new Uint8Array(ctAndTag.subarray(ctAndTag.length - 16));
-    const aad = Buffer.from('chaoskb-master-key-wrap-v1');
-
-    let plaintext: Uint8Array;
+    // The instance's held passphrase is only consulted on wrap; unwrap
+    // reads from UnlockInput.
+    const tier = MaximumTier.fromPassphrase(passphrase);
+    const master = await tier.unwrap(wrapped, { kind: 'passphrase', passphrase });
     try {
-      plaintext = aeadDecrypt(wrappingKey.buffer, nonce, ciphertext, tag, aad);
-    } catch {
-      throw new Error('Incorrect passphrase.');
+      return SecureBuffer.from(Buffer.from(master.buffer));
+    } finally {
+      master.dispose();
     }
-
-    const { SecureBuffer } = await import('../crypto/secure-buffer.js');
-    return SecureBuffer.from(Buffer.from(plaintext));
-  } finally {
-    wrappingKey.dispose();
+  } catch (err) {
+    throw new Error(
+      `Incorrect passphrase: ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
 }
 

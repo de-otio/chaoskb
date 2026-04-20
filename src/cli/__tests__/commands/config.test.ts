@@ -28,20 +28,67 @@ vi.mock('../../commands/setup.js', async (importOriginal) => {
   };
 });
 
-const mockRetrieve = vi.fn().mockResolvedValue(null);
-const mockDelete = vi.fn().mockResolvedValue(true);
+// Mock keyring: StandardTier unlock + MaximumTier wrap. We return a
+// synthetic WrappedKey structure on wrap so the config command can
+// serialise it to the master-key.enc blob.
+const mockUnlockWithSshKey = vi.fn().mockResolvedValue(undefined);
+const mockWithMaster = vi.fn();
+const mockLock = vi.fn().mockResolvedValue(undefined);
+const mockDelete = vi.fn().mockResolvedValue(undefined);
+const mockGet = vi.fn();
+const mockMaxWrap = vi.fn();
+const mockMaxUnwrap = vi.fn();
 
-vi.mock('../../../crypto/keyring.js', () => ({
-  KeyringService: class {
-    retrieve = mockRetrieve;
-    store = vi.fn().mockResolvedValue(undefined);
+vi.mock('@de-otio/keyring', () => {
+  class KeyRing {
+    constructor(_opts: unknown) {}
+    unlockWithSshKey = mockUnlockWithSshKey;
+    withMaster = mockWithMaster;
+    lock = mockLock;
     delete = mockDelete;
-  },
-}));
-vi.mock('../../bootstrap.js', () => ({
-  FILE_KEY_PATH: path.join(os.homedir(), '.chaoskb', 'master.key'),
-  CHAOSKB_DIR: path.join(os.homedir(), '.chaoskb'),
-}));
+    getWrapped = vi.fn().mockResolvedValue(null);
+  }
+  const StandardTier = { fromSshKey: vi.fn(() => ({ kind: 'standard' })) };
+  class MaximumTier {
+    static fromPassphrase = vi.fn((passphrase: string) => {
+      if (!passphrase) throw new Error('passphrase required');
+      return {
+        kind: 'maximum',
+        wrap: mockMaxWrap,
+        unwrap: mockMaxUnwrap,
+      };
+    });
+  }
+  class OsKeychainStorage {
+    readonly platform = 'node' as const;
+    readonly acceptedTiers: readonly string[];
+    constructor(opts: { acceptedTiers?: readonly string[] }) {
+      this.acceptedTiers = opts.acceptedTiers ?? ['standard', 'maximum'];
+    }
+    get = mockGet;
+    put = vi.fn().mockResolvedValue(undefined);
+    delete = vi.fn();
+    list = vi.fn().mockResolvedValue([]);
+  }
+  class FileSystemStorage {
+    readonly platform = 'node' as const;
+    readonly acceptedTiers: readonly string[];
+    constructor(opts: { acceptedTiers?: readonly string[] }) {
+      this.acceptedTiers = opts.acceptedTiers ?? ['standard', 'maximum'];
+    }
+    get = mockGet;
+    put = vi.fn().mockResolvedValue(undefined);
+    delete = vi.fn();
+    list = vi.fn().mockResolvedValue([]);
+  }
+  return {
+    KeyRing,
+    StandardTier,
+    MaximumTier,
+    OsKeychainStorage,
+    FileSystemStorage,
+  };
+});
 
 import { upgradeTierCommand } from '../../commands/config.js';
 import { loadConfig, saveConfig } from '../../commands/setup.js';
@@ -57,6 +104,43 @@ describe('config upgrade-tier', () => {
     answerIndex = 0;
     vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});
+    // fs.existsSync default: true (simulate that SSH key and config are present)
+    vi.mocked(fs.existsSync).mockReturnValue(true);
+    // Stub read of SSH pubkey + privkey + any other file reads with plausible defaults
+    vi.mocked(fs.readFileSync).mockImplementation(((p: string) => {
+      if (String(p).endsWith('.pub')) {
+        return 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIG1lc3NhZ2U= test@host';
+      }
+      return '-----BEGIN OPENSSH PRIVATE KEY-----\nfake\n-----END OPENSSH PRIVATE KEY-----\n';
+    }) as typeof fs.readFileSync);
+    // Default: keyring slot has an existing wrapped blob
+    mockGet.mockResolvedValue({
+      v: 1,
+      tier: 'standard',
+      envelope: new Uint8Array(16),
+      ts: '2026-01-01T00:00:00.000Z',
+    });
+    // Default: withMaster invokes callback with a stand-in master that
+    // supports .dispose() and .buffer access.
+    mockWithMaster.mockImplementation(async (fn: (m: unknown) => Promise<unknown>) =>
+      fn({ buffer: Buffer.alloc(32, 0xab), length: 32, dispose: vi.fn() }),
+    );
+    // Default: MaximumTier.wrap produces a serialisable WrappedKey.
+    mockMaxWrap.mockResolvedValue({
+      v: 1,
+      tier: 'maximum',
+      envelope: new Uint8Array([1, 2, 3, 4]),
+      kdfParams: {
+        algorithm: 'argon2id',
+        t: 3,
+        m: 65536,
+        p: 1,
+        salt: new Uint8Array(16),
+      },
+      ts: '2026-01-01T00:00:00.000Z',
+    });
+    // Default: MaximumTier.unwrap (used by verify-after-write) succeeds.
+    mockMaxUnwrap.mockResolvedValue({ buffer: Buffer.alloc(32, 0xcc), dispose: vi.fn() });
   });
 
   afterEach(() => {
@@ -68,17 +152,13 @@ describe('config upgrade-tier', () => {
     it('should reject invalid tier argument', async () => {
       await upgradeTierCommand('invalid');
       expect(process.exitCode).toBe(1);
-      expect(console.error).toHaveBeenCalledWith(
-        expect.stringContaining('Invalid tier'),
-      );
+      expect(console.error).toHaveBeenCalledWith(expect.stringContaining('Invalid tier'));
     });
 
     it('should reject deprecated enhanced tier', async () => {
       await upgradeTierCommand('enhanced');
       expect(process.exitCode).toBe(1);
-      expect(console.error).toHaveBeenCalledWith(
-        expect.stringContaining('deprecated'),
-      );
+      expect(console.error).toHaveBeenCalledWith(expect.stringContaining('deprecated'));
     });
 
     it('should error when not configured', async () => {
@@ -86,9 +166,7 @@ describe('config upgrade-tier', () => {
 
       await upgradeTierCommand('maximum');
       expect(process.exitCode).toBe(1);
-      expect(console.error).toHaveBeenCalledWith(
-        expect.stringContaining('not configured'),
-      );
+      expect(console.error).toHaveBeenCalledWith(expect.stringContaining('not configured'));
     });
 
     it('should error when already at requested tier', async () => {
@@ -99,36 +177,26 @@ describe('config upgrade-tier', () => {
 
       await upgradeTierCommand('maximum');
       expect(process.exitCode).toBe(1);
-      expect(console.error).toHaveBeenCalledWith(
-        expect.stringContaining('Already at'),
-      );
+      expect(console.error).toHaveBeenCalledWith(expect.stringContaining('Already at'));
     });
 
-    it('should error when master key not found', async () => {
+    it('should error when master key not found (empty keyring slot)', async () => {
       vi.mocked(loadConfig).mockResolvedValue({
         securityTier: 'standard',
         projects: [],
       });
+      mockGet.mockResolvedValueOnce(null);
 
       await upgradeTierCommand('maximum');
       expect(process.exitCode).toBe(1);
-      expect(console.error).toHaveBeenCalledWith(
-        expect.stringContaining('Master key not found'),
-      );
+      expect(console.error).toHaveBeenCalledWith(expect.stringContaining('Master key not found'));
     });
 
     it('should error for maximum tier when stdin is not TTY', async () => {
-      const mockMasterKey = {
-        buffer: Buffer.alloc(32, 0xaa),
-        length: 32,
-        isDisposed: false,
-        dispose: vi.fn(),
-      };
       vi.mocked(loadConfig).mockResolvedValue({
         securityTier: 'standard',
         projects: [],
       });
-      mockRetrieve.mockResolvedValueOnce(mockMasterKey);
 
       const originalIsTTY = process.stdin.isTTY;
       Object.defineProperty(process.stdin, 'isTTY', { value: false, configurable: true });
@@ -136,9 +204,7 @@ describe('config upgrade-tier', () => {
       try {
         await upgradeTierCommand('maximum');
         expect(process.exitCode).toBe(1);
-        expect(console.error).toHaveBeenCalledWith(
-          expect.stringContaining('interactive terminal'),
-        );
+        expect(console.error).toHaveBeenCalledWith(expect.stringContaining('interactive terminal'));
       } finally {
         Object.defineProperty(process.stdin, 'isTTY', { value: originalIsTTY, configurable: true });
       }
@@ -146,35 +212,35 @@ describe('config upgrade-tier', () => {
   });
 
   describe('upgrade to maximum (happy path)', () => {
-    it('should encrypt key, write blob, remove from keyring, and update config', async () => {
-      const keyBytes = Buffer.alloc(32);
-      for (let i = 0; i < 32; i++) keyBytes[i] = i;
-      const mockMasterKey = {
-        buffer: keyBytes,
-        length: 32,
-        isDisposed: false,
-        dispose: vi.fn(),
-      };
-
+    it('should wrap under MaximumTier, write blob, and update config', async () => {
       vi.mocked(loadConfig).mockResolvedValue({
         securityTier: 'standard',
         projects: [],
       });
-      mockRetrieve.mockResolvedValueOnce(mockMasterKey);
 
       const originalIsTTY = process.stdin.isTTY;
       Object.defineProperty(process.stdin, 'isTTY', { value: true, configurable: true });
 
-      // Passphrase must be >= 25 characters
       const passphrase = 'correct horse battery staple!';
-      mockAnswers = [passphrase, passphrase]; // enter + confirm
+      mockAnswers = [passphrase, passphrase];
 
-      // Mock fs.writeFileSync to capture the blob
       let writtenBlob: string | undefined;
-      vi.mocked(fs.writeFileSync).mockImplementation((_path, data) => {
+      vi.mocked(fs.writeFileSync).mockImplementation((_p, data) => {
         writtenBlob = data as string;
       });
       vi.mocked(fs.unlinkSync).mockImplementation(() => {});
+
+      // After writeFileSync captures the blob, verifyRoundTrip reads the
+      // same blob back. Route readFileSync for master-key.enc to the
+      // captured value; other reads continue to return SSH key text.
+      vi.mocked(fs.readFileSync).mockImplementation(((p: string) => {
+        const ps = String(p);
+        if (ps.endsWith('master-key.enc')) return writtenBlob ?? '{}';
+        if (ps.endsWith('.pub')) {
+          return 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIG1lc3NhZ2U= test@host';
+        }
+        return '-----BEGIN OPENSSH PRIVATE KEY-----\nfake\n-----END OPENSSH PRIVATE KEY-----\n';
+      }) as typeof fs.readFileSync);
 
       try {
         await upgradeTierCommand('maximum');
@@ -188,73 +254,54 @@ describe('config upgrade-tier', () => {
           { mode: 0o600 },
         );
 
-        // Verify blob structure
+        // Verify blob structure (the serialised WrappedKey shape)
         expect(writtenBlob).toBeDefined();
         const blob = JSON.parse(writtenBlob!);
         expect(blob.v).toBe(1);
-        expect(blob.kdf).toBe('argon2id');
-        expect(blob.t).toBe(3);
-        expect(blob.m).toBe(65536);
-        expect(blob.p).toBe(1);
-        expect(blob.salt).toMatch(/^[0-9a-f]+$/);
-        expect(blob.nonce).toMatch(/^[0-9a-f]+$/);
-        expect(blob.ciphertext).toMatch(/^[0-9a-f]+$/);
+        expect(blob.tier).toBe('maximum');
+        expect(typeof blob.envelope).toBe('string');
+        expect(blob.kdfParams.algorithm).toBe('argon2id');
+        expect(blob.kdfParams.t).toBe(3);
+        expect(blob.kdfParams.m).toBe(65536);
+        expect(blob.kdfParams.p).toBe(1);
 
-        // Verify keyring entry was deleted
-        expect(mockDelete).toHaveBeenCalledWith('chaoskb', 'master-key');
+        // Verify keyring Standard entry was deleted
+        expect(mockDelete).toHaveBeenCalled();
 
         // Verify config updated
         expect(saveConfig).toHaveBeenCalledWith(
           expect.objectContaining({ securityTier: 'maximum' }),
         );
-
-        expect(mockMasterKey.dispose).toHaveBeenCalled();
       } finally {
         Object.defineProperty(process.stdin, 'isTTY', { value: originalIsTTY, configurable: true });
       }
     });
 
     it('should reject passphrase shorter than 25 characters', async () => {
-      const mockMasterKey = {
-        buffer: Buffer.alloc(32, 0xaa),
-        length: 32,
-        isDisposed: false,
-        dispose: vi.fn(),
-      };
       vi.mocked(loadConfig).mockResolvedValue({
         securityTier: 'standard',
         projects: [],
       });
-      mockRetrieve.mockResolvedValueOnce(mockMasterKey);
 
       const originalIsTTY = process.stdin.isTTY;
       Object.defineProperty(process.stdin, 'isTTY', { value: true, configurable: true });
 
-      mockAnswers = ['tooshort']; // < 25 chars
+      mockAnswers = ['tooshort'];
 
       try {
         await upgradeTierCommand('maximum');
         expect(process.exitCode).toBe(1);
-        expect(console.error).toHaveBeenCalledWith(
-          expect.stringContaining('25 characters'),
-        );
+        expect(console.error).toHaveBeenCalledWith(expect.stringContaining('25 characters'));
       } finally {
         Object.defineProperty(process.stdin, 'isTTY', { value: originalIsTTY, configurable: true });
       }
     });
 
     it('should reject mismatched passphrases', async () => {
-      const mockMasterKey = {
-        buffer: Buffer.alloc(32, 0xaa),
-        length: 32,
-        isDisposed: false,
-        dispose: vi.fn(),
-      };
       vi.mocked(loadConfig).mockResolvedValue({
         securityTier: 'standard',
         projects: [],
       });
-      mockRetrieve.mockResolvedValueOnce(mockMasterKey);
 
       const originalIsTTY = process.stdin.isTTY;
       Object.defineProperty(process.stdin, 'isTTY', { value: true, configurable: true });
@@ -264,9 +311,7 @@ describe('config upgrade-tier', () => {
       try {
         await upgradeTierCommand('maximum');
         expect(process.exitCode).toBe(1);
-        expect(console.error).toHaveBeenCalledWith(
-          expect.stringContaining('do not match'),
-        );
+        expect(console.error).toHaveBeenCalledWith(expect.stringContaining('do not match'));
       } finally {
         Object.defineProperty(process.stdin, 'isTTY', { value: originalIsTTY, configurable: true });
       }

@@ -1,6 +1,6 @@
+import { SecureBuffer } from '@de-otio/crypto-envelope';
 import { deriveKey } from '@de-otio/crypto-envelope/primitives';
 
-import { SecureBuffer } from './secure-buffer.js';
 import type { DerivedKeySet } from './types.js';
 
 // Re-export `deriveKey` so callers that import it from this module keep working.

@@ -211,7 +211,7 @@ describe('Adversarial tests', () => {
       // Try to decrypt with a truncated nonce
       const shortNonce = nonce.slice(0, 12);
       expect(() => aeadDecrypt(key, shortNonce, ciphertext, tag, aad)).toThrow(
-        'Nonce must be 24 bytes',
+        /nonce must be 24 bytes/i,
       );
     });
 
@@ -224,7 +224,7 @@ describe('Adversarial tests', () => {
 
       const longNonce = new Uint8Array(48);
       expect(() => aeadDecrypt(key, longNonce, ciphertext, tag, aad)).toThrow(
-        'Nonce must be 24 bytes',
+        /nonce must be 24 bytes/i,
       );
     });
   });

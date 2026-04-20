@@ -2,10 +2,17 @@ import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
+import {
+  KeyRing,
+  StandardTier,
+  OsKeychainStorage,
+  FileSystemStorage,
+  parseSshPublicKey,
+  type KeyStorage,
+} from '@de-otio/keyring';
 import { loadConfig } from './setup.js';
 import { createSyncClient } from '../tools/sync-client.js';
-
-const CHAOSKB_DIR = path.join(os.homedir(), '.chaoskb');
+import { KEYRING_SERVICE, CHAOSKB_DIR, FILE_KEY_PATH } from '../bootstrap.js';
 
 /** Base62 alphabet for human-friendly codes. */
 const BASE62 = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
@@ -27,6 +34,28 @@ function hashCode(code: string): string {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function buildStorage(): KeyStorage<'standard'> {
+  if (process.env.CHAOSKB_KEY_STORAGE === 'file') {
+    const fsDir = path.join(CHAOSKB_DIR, 'keyring');
+    fs.mkdirSync(fsDir, { recursive: true, mode: 0o700 });
+    return new FileSystemStorage({ root: fsDir }) as KeyStorage<'standard'>;
+  }
+  return new OsKeychainStorage<'standard'>({
+    service: KEYRING_SERVICE,
+    acceptedTiers: ['standard'] as const,
+  });
+}
+
+function resolveOldKeyPath(configSshKeyPath?: string): string | null {
+  if (configSshKeyPath && fs.existsSync(configSshKeyPath)) return configSshKeyPath;
+  const sshDir = path.join(os.homedir(), '.ssh');
+  for (const c of ['id_ed25519', 'id_rsa']) {
+    const p = path.join(sshDir, c);
+    if (fs.existsSync(p) && fs.existsSync(`${p}.pub`)) return p;
+  }
+  return null;
 }
 
 /**
@@ -76,7 +105,7 @@ export async function devicesAddCommand(): Promise<void> {
       continue;
     }
 
-    const statusBody = await statusResp.json() as { status: string; newPublicKey?: string };
+    const statusBody = (await statusResp.json()) as { status: string; newPublicKey?: string };
     if (statusBody.status === 'ready' && statusBody.newPublicKey) {
       newPublicKey = statusBody.newPublicKey;
       break;
@@ -92,44 +121,45 @@ export async function devicesAddCommand(): Promise<void> {
 
   console.log('\n  New device connected. Wrapping master key...');
 
-  // 4. Wrap master key with new device's public key and upload
-  const { parseSSHPublicKey } = await import('../../crypto/ssh-keys.js');
-  const { wrapMasterKey } = await import('../../crypto/tiers/standard.js');
-  const { KeyringService } = await import('../../crypto/keyring.js');
+  // 4. Wrap master key with new device's public key and upload.
+  const config = await loadConfig();
+  const oldKeyPath = resolveOldKeyPath(config?.sshKeyPath);
+  if (!oldKeyPath) {
+    console.error('  Could not locate the current SSH key. Cannot wrap master for new device.');
+    process.exit(1);
+  }
+  const oldPublicKeyLine = fs.readFileSync(`${oldKeyPath}.pub`, 'utf-8').trim();
+  const oldKeyPem = fs.readFileSync(oldKeyPath, 'utf-8');
 
-  await loadConfig(); // ensure config is initialized
-  const keyring = new KeyringService();
-  const masterKey = await keyring.retrieve('chaoskb', 'master-key');
-  if (!masterKey) {
-    // Try file-based fallback
-    const fileKeyPath = path.join(CHAOSKB_DIR, 'master.key');
-    if (fs.existsSync(fileKeyPath)) {
-      const { SecureBuffer } = await import('../../crypto/secure-buffer.js');
-      const hex = fs.readFileSync(fileKeyPath, 'utf-8').trim();
-      const keyBuf = SecureBuffer.from(Buffer.from(hex, 'hex'));
-      const keyInfo = parseSSHPublicKey(newPublicKey);
-      const wrappedBlob = wrapMasterKey(keyBuf, keyInfo);
-      keyBuf.dispose();
+  const storage = buildStorage();
+  const oldTier = StandardTier.fromSshKey(oldPublicKeyLine);
+  const ring = new KeyRing({ tier: oldTier, storage });
 
-      const putResp = await signedFetch('PUT', '/v1/wrapped-key', wrappedBlob);
-      if (!putResp.ok) {
-        console.error(`  Failed to upload wrapped key: ${putResp.status}`);
-        process.exit(1);
-      }
+  try {
+    await ring.unlockWithSshKey(oldKeyPem);
+  } catch (err) {
+    // Fallback: legacy file-based master.key for users mid-migration.
+    if (fs.existsSync(FILE_KEY_PATH)) {
+      console.error('  Legacy master.key detected but keyring slot is empty. Re-run setup.');
     } else {
-      console.error('  Master key not found. Cannot wrap key for new device.');
-      process.exit(1);
+      console.error(
+        `  Failed to unlock master: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
-  } else {
-    const keyInfo = parseSSHPublicKey(newPublicKey);
-    const wrappedBlob = wrapMasterKey(masterKey, keyInfo);
-    masterKey.dispose();
+    process.exit(1);
+  }
 
-    const putResp = await signedFetch('PUT', '/v1/wrapped-key', wrappedBlob);
+  try {
+    const newTier = StandardTier.fromSshKey(newPublicKey);
+    const wrappedNew = await ring.withMaster(async (master) => newTier.wrap(master));
+
+    const putResp = await signedFetch('PUT', '/v1/wrapped-key', wrappedNew.envelope);
     if (!putResp.ok) {
       console.error(`  Failed to upload wrapped key: ${putResp.status}`);
       process.exit(1);
     }
+  } finally {
+    await ring.lock();
   }
 
   console.log('  Device linked successfully.');
@@ -151,7 +181,9 @@ export async function devicesListCommand(): Promise<void> {
     process.exit(1);
   }
 
-  const data = await resp.json() as { devices: Array<{ fingerprint: string; registeredAt: string; publicKey?: string }> };
+  const data = (await resp.json()) as {
+    devices: Array<{ fingerprint: string; registeredAt: string; publicKey?: string }>;
+  };
 
   console.log('');
   console.log('  Registered devices');
@@ -181,7 +213,7 @@ export async function devicesRemoveCommand(fingerprint: string): Promise<void> {
   // Show device info before removing
   const listResp = await signedFetch('GET', '/v1/devices');
   if (listResp.ok) {
-    const data = await listResp.json() as { devices: Array<{ fingerprint: string; registeredAt: string }> };
+    const data = (await listResp.json()) as { devices: Array<{ fingerprint: string; registeredAt: string }> };
     const device = data.devices.find((d) => d.fingerprint === fingerprint);
     if (device) {
       const date = new Date(device.registeredAt).toLocaleString();
@@ -203,3 +235,7 @@ export async function devicesRemoveCommand(fingerprint: string): Promise<void> {
   console.log(`  Device ${fingerprint} removed. It will stop syncing on its next attempt.`);
   console.log('');
 }
+
+// Parked: imports below keep bundlers from complaining about unused pure imports
+// when only some of the keyring symbols are used per function.
+void parseSshPublicKey;
