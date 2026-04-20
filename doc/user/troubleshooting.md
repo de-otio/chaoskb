@@ -63,16 +63,25 @@ Your synced storage quota is full. New articles still save and search locally â€
 
 ## Article ingest fails
 
-**Symptom:** "Could not fetch", "Extraction failed", or "URL blocked" when saving a URL.
+**Symptom:** "Could not fetch", "Extraction failed", "URL blocked", or "possible-prompt-injection" when saving a URL.
 
 **Common causes:**
 - The URL is on a known malicious-site blocklist ("URL blocked" error)
+- The fetched page matched prompt-injection patterns â€” content like "ignore all previous instructions" is rejected by default to keep adversarial text out of your KB ("possible-prompt-injection" error)
 - The URL is behind a paywall or login wall (ChaosKB fetches as an anonymous visitor)
 - The site blocks automated requests
 - The content is an unsupported format (images, video, etc.)
 - Network connectivity issue
 
-**Fix:** Try the URL in your browser. If it loads, the site may be blocking non-browser requests. There is no workaround for paywalled content. URLs flagged as malicious cannot be overridden.
+**Fix:** Try the URL in your browser. If it loads, the site may be blocking non-browser requests. There is no workaround for paywalled content. URLs on the malicious-site blocklist are hard-blocked.
+
+If a legitimate page is being rejected for "possible-prompt-injection" (e.g., an article that quotes an injection example for educational purposes), you can downgrade the check to a warning with:
+
+```bash
+chaoskb-mcp config safety --injection-policy warn
+```
+
+Run `chaoskb-mcp config safety --help` for the full list of safety options (URL threat-intel feeds, strict mode, secrets policy, etc.).
 
 For local files, use the `filePath` parameter instead of `url`. ChaosKB supports PDF, DOCX, PPTX, HTML, TXT, and MD files.
 
