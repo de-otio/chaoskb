@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.7] - 2026-04-20
+
 ### Added
 - **JS-rendered page fallback.** `kb_ingest` now transparently renders client-side SPAs (React, Vue, Angular, Next.js, etc.) via a headless Chromium instance instead of returning "no extractable content". Playwright Library is bundled as a regular dependency; Chromium downloads during `npm install`. The browser is launched lazily on the first JS-rendered URL, reused across sequential ingestions, and self-closes after 60 s idle.
 - Typed `JsRenderRequiredError` in `src/pipeline/extract.ts` replaces the ad-hoc string-only throws from the two SPA-detection sites. `content-pipeline.ts::fetchAndExtract` catches it and invokes `fetchUrlWithBrowser`.
@@ -17,7 +19,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - **Crypto primitives extracted to `@de-otio/crypto-envelope`.** chaoskb's in-tree crypto module now re-exports AEAD, HKDF, Argon2id, commitment, canonical JSON, SecureBuffer, AAD construction, blob-ID generation, envelope v1/v2 serialisation, and the high-level `encryptPayload`/`decryptEnvelope` flow from the new package. Internal chaoskb API is unchanged (same `encryptPayload(payload, keys, kid)` signature, same `DerivedKeySet` composition with `chaoskb-content` / `chaoskb-metadata` / `chaoskb-embedding` / `chaoskb-commit` HKDF info strings), so every existing on-disk envelope decrypts byte-identically. Full 223-test suite passes unchanged.
-- New runtime dependency: `@de-otio/crypto-envelope@^0.1.0-alpha.1`.
+- **Keyring extracted to `@de-otio/keyring`.** In-house keyring duplicates removed; chaoskb now consumes the standalone package for OS keychain access. No behavioural change for users.
+- New runtime dependencies: `@de-otio/crypto-envelope@^0.2.0-alpha.1`, `@de-otio/keyring@^0.1.0-alpha.1`.
+
+### Fixed
+- Test: PDF extraction timeout actually raised to 30 s on all platforms (previous bump didn't apply everywhere).
 
 ## [0.3.6] - 2026-04-12
 
