@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.9] - 2026-04-21
+
+### Changed
+- Refreshed bundled `guide-hashes.json` to match the updated agent guides at chaoskb.com (security guide gained a "Content safety (ingest-time)" walk-through; troubleshooting guide gained rows for the new ingest-time error codes; install guide post-install step now offers a safety-config walkthrough). No code changes.
+
 ## [0.3.8] - 2026-04-20
 
 ### Security
