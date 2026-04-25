@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.11] - 2026-04-25
+
+### Changed
+- Bumped `@de-otio/crypto-envelope` from `^0.3.0-alpha.1` to `^0.3.0` (now released).
+- Bumped `@de-otio/keyring` from `^0.1.0-alpha.1` to `^0.2.2` (now released). The new keyring declares a peer on `crypto-envelope ^0.3.0`, so the two packages are now version-aligned. No behavioural changes — wire format and APIs are unchanged.
+
 ## [0.3.10] - 2026-04-25
 
 ### Changed

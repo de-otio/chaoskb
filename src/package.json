@@ -1,6 +1,6 @@
 {
   "name": "@de-otio/chaoskb-client",
-  "version": "0.3.10",
+  "version": "0.3.11",
   "description": "ChaosKB - E2E encrypted personal knowledge base with MCP integration",
   "license": "MIT",
   "repository": {
@@ -46,8 +46,8 @@
   },
   "dependencies": {
     "@de-otio/agent-safety-pack": "^0.1.1",
-    "@de-otio/crypto-envelope": "^0.3.0-alpha.1",
-    "@de-otio/keyring": "^0.1.0-alpha.1",
+    "@de-otio/crypto-envelope": "^0.3.0",
+    "@de-otio/keyring": "^0.2.2",
     "@modelcontextprotocol/sdk": "^1.27.1",
     "@mozilla/readability": "^0.6.0",
     "@noble/ciphers": "^2.1.1",
