@@ -213,7 +213,7 @@ describe('Envelope v1', () => {
         enc: { ...envelope.enc, commit: fakeCommit },
       };
 
-      expect(() => decryptEnvelope(badEnvelope, keys)).toThrow(/key commitment verification failed/i);
+      expect(() => decryptEnvelope(badEnvelope, keys)).toThrow(/authentication failed/i);
 
       disposeKeySet(keys);
     });

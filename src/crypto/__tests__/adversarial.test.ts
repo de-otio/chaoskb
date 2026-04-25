@@ -176,7 +176,7 @@ describe('Adversarial tests', () => {
       };
 
       // Commitment binds to blob ID, so this should fail
-      expect(() => decryptEnvelope(swapped, keys)).toThrow(/key commitment verification failed/i);
+      expect(() => decryptEnvelope(swapped, keys)).toThrow(/authentication failed/i);
 
       disposeKeySet(keys);
     });
@@ -194,7 +194,7 @@ describe('Adversarial tests', () => {
         },
       };
 
-      expect(() => decryptEnvelope(badEnvelope, keys)).toThrow(/key commitment verification failed/i);
+      expect(() => decryptEnvelope(badEnvelope, keys)).toThrow(/authentication failed/i);
 
       disposeKeySet(keys);
     });

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.10] - 2026-04-25
+
+### Changed
+- Bumped `@de-otio/crypto-envelope` to `^0.3.0-alpha.1`. Wire format is byte-identical to 0.2.x — every existing on-disk envelope decrypts unchanged. Upstream additions: genuine browser/WebCrypto-only portability (no `Buffer` dep), typed error taxonomy (`AuthenticationFailedError`, `MalformedEnvelopeError`, `UnsupportedAlgorithmError`, `UnsupportedVersionError`, `TruncatedCiphertextError`), and `MessageCounter` integration on `rewrapEnvelope` (optional 4th arg).
+- **Partitioning-oracle defense:** wrong CEK, wrong commit key, tampered ciphertext, tampered AAD, and tampered commitment now all surface as the same `AuthenticationFailedError` with a single byte-identical message (`"authentication failed; envelope is wrong key or tampered"`). Decrypt no longer leaks which check failed. chaoskb's commitment-mismatch tests updated to match.
+
 ## [0.3.9] - 2026-04-21
 
 ### Changed
